@@ -1,0 +1,8 @@
+rawdump.exe / rawmethod.exe 及配套 DLL 源自 AI4MSOmics/eval_ms_pipeline_repo（Apache-2.0），
+本地编译自 E:\KL.2025.08.26.BL21_SAP\...\0.LysargiNase_480_test\analysis_scripts\{rawdump,rawmethod}。
+版权与许可以原仓库为准：https://github.com/AI4MSOmics/eval_ms_pipeline_repo
+
+- rawmethod：读 Thermo raw 内嵌仪器方法（OpenMcdf，无需 Thermo 运行库）
+- rawdump：导出逐扫描表（需 ThermoFisher.CommonCore.RawFileReader）
+
+按 Apache-2.0 第 4 条随包分发副本并保留此声明。

@@ -1,0 +1,30 @@
+# Third-party notices
+
+ORFscape itself is MIT-licensed (see `LICENSE`). The components below are **not**
+covered by that license; they keep their own terms and are listed here because
+they are either bundled or required at run time.
+
+## Bundled in `orfscape/tools/`
+
+| Component | Files | License / owner | Notes |
+|---|---|---|---|
+| rawdump | `rawdump/rawdump.exe`, `rawdump/rawdump.dll`, `rawdump/*.deps.json` | Apache-2.0 — [AI4MSOmics/eval_ms_pipeline_repo](https://github.com/AI4MSOmics/eval_ms_pipeline_repo) | Reads Thermo `.raw` headers/scans without the Thermo runtime for metadata; locally built, upstream ships **no** prebuilt binary, so it is bundled here. |
+| rawmethod | `rawmethod/rawmethod.exe`, `rawmethod/rawmethod.dll`, `rawmethod/*.deps.json` | Apache-2.0 — same upstream | Extracts the instrument method embedded in a Thermo `.raw` (OpenMcdf, no Thermo runtime). |
+| ThermoFisher.CommonCore.* | `rawdump/ThermoFisher.CommonCore.Data.dll`, `rawdump/ThermoFisher.CommonCore.RawFileReader.dll` | Proprietary — Thermo Fisher Scientific | Runtime dependencies of `rawdump` only. They remain the property of Thermo Fisher Scientific and are redistributed solely as required runtime components. Remove `rawdump/` if you cannot accept this. |
+| OpenMcdf | `rawmethod/OpenMcdf.dll` | MPL-2.0 — OpenMcdf contributors | Compound-file reader used by `rawmethod`. |
+| pFind configuration | `pFind_modification.ini`, `restrict_pFind.cfg` | pFind Studio (free for academic use) | Modification table and search configuration derived from pFind 3.1; edit to match your own pFind installation. |
+
+## Not bundled (install separately)
+
+| Component | License | Why not bundled |
+|---|---|---|
+| Prodigal 2.6.3 | GPL-3.0 | Copyleft binary; install from the Prodigal release page or `conda install -c bioconda prodigal`. `orfscape doctor` looks for it automatically. |
+| pFind 3.1 | Free for academic use (pFind Studio) | Distributed by its authors. |
+| BLAST+ | Public domain (NCBI) | Distributed by NCBI. |
+| isoPSV | MIT — [Songhao-Jiang/isoPSV](https://github.com/Songhao-Jiang/isoPSV) | Separate project; point `ORFSCAPE_ISOPSV` at its folder. |
+| msconvert (ProteoWizard) | Apache-2.0 | Distributed by ProteoWizard. |
+
+## Python dependencies
+
+`numpy` (BSD-3), `matplotlib` (PSF-based), `python-docx` (MIT) at run time;
+`Pillow` (HPND) for the GUI visual-regression test. `tkinter` ships with CPython.

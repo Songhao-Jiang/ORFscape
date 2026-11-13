@@ -1,0 +1,60 @@
+# ── Python ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# ── 本机路径配置（含个人目录，绝不入库）──────────────
+orfscape/paths.local.json
+
+# ── 运行产物 ──────────────────────────────────────────
+orfscape_projects/
+raw/
+00_logs/
+*.log
+*.jsonl
+*.zip
+gui_stdout_*.log
+
+# ── 质谱/序列数据（体积大，按需自备）─────────────────
+*.raw
+*.d
+*.mgf
+*.mzML
+*.mzXML
+*.wiff
+*.fastq
+*.fastq.gz
+*.fq.gz
+*.bam
+*.bai
+
+# ── 编辑器 / 系统 ─────────────────────────────────────
+.mimosa/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 本地草稿 ──────────────────────────────────────────
+_staging/
+tmp/
+*.tmp
+scripts/_*.py
+base_view.png
+chain_after_e2.txt
+orfipy_transcribed_regions.fa_out/
+
+# ── 内部研发记录（不入公共仓库；团队本地保留）─────────
+docs/GUI_CHANGELOG.md
+docs/GUI_BACKLOG.md
+
+# ── 第三方二进制：可自行安装，不入库 ──────────────────
+orfscape/tools/prodigal.exe
+
+# ── 项目专属结果包模块（不参与通用流程，团队本地保留）──
+orfscape/core/sjh.py

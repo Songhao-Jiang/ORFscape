@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If ORFscape contributes to a publication, please cite this repository and the version you used."
+title: "ORFscape: layered-ORF proteogenomics pipeline with mass-spectrometry evidence arbitration"
+abstract: >-
+  ORFscape builds a layered ORF database from a genome (annotated CDS, ab initio
+  predictions, six-frame ORFs, N-terminal extensions, transcript evidence; spliced
+  proteins and junction peptides for eukaryotes), searches it against DDA mass
+  spectra, filters novel peptides, arbitrates them per spectrum, and classifies the
+  events into a report. A desktop GUI, a CLI and an agent-driven runner share the
+  same event stream.
+authors:
+  - family-names: Jiang
+    given-names: Songhao
+    affiliation: "Institute of Military Medicine, Academy of Military Sciences"
+version: 0.1.0
+date-released: 2026-11-13
+license: MIT
+repository-code: "https://github.com/Songhao-Jiang/ORFscape"
+keywords:
+  - proteogenomics
+  - novel peptides
+  - novel ORFs
+  - N-terminal extension
+  - mass spectrometry
+  - prokaryote
+  - eukaryote

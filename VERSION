@@ -1,0 +1,5 @@
+ORFscape v0.1.0 (2026-11-13) — first public release.
+Layered ORF database (L0-L6) for prokaryotes plus a spliced layer builder for eukaryotes;
+P0-P9 orchestration with a self-check gate after every stage; pFind E1/E2 discovery search;
+isoPSV competitive arbitration; event classification, annotation and report; desktop GUI
+driven by a JSONL event stream.

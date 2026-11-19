@@ -15,9 +15,9 @@ import csv
 import json
 import math
 import os
-import pickle
 import re
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -765,23 +765,13 @@ def main(argv=None):
                     help="StringTie 单样本 GTF（文件/目录），用于转录本 TPM")
     ap.add_argument("--coverage-bedgraph", default="",
                     help="逐碱基深度 bedgraph（bedtools genomecov -bga 产出，可选）")
-    ap.add_argument("--trust-cache-pickle", action="store_true",
-                    help="允许读旧 pickle 缓存（默认只读 JSON；pickle 会执行代码）")
     args = ap.parse_args(argv)
 
     t1 = load_table(args.table1)
     t3 = load_table(args.table3)
-    # cache 优先按 JSON 读（不执行反序列化）；只有显式 --trust-cache-pickle 才读 pickle，
-    # 避免"别人给的 cache 文件"变成任意代码执行入口。
-    with open(args.cache, "rb") as fh:
-        raw = fh.read()
-    try:
-        cache = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        if not args.trust_cache_pickle:
-            raise SystemExit("cache 不是 JSON；旧 pickle 缓存需加 --trust-cache-pickle "
-                             "或先重生成（不再默认反序列化不可信文件）")
-        cache = pickle.loads(raw)  # noqa: S301 —— 仅限显式信任本地缓存
+    # cache 只按 JSON 读：旧 pickle 缓存不再支持（反序列化等于执行作者代码），
+    # 需要旧缓存时先重生成一次。
+    cache = json.loads(Path(args.cache).read_text(encoding="utf-8"))
 
     wanted = {iln(r["peptide"]) for r in t1}
     psms = best_psms(args.spectra, wanted)

@@ -47,6 +47,15 @@ SUB_LABEL = {
 }
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def T(zh, en):
     from .i18n import get_lang
     return zh if get_lang() == "zh" else en
@@ -450,7 +459,7 @@ def write_table(root, out_dir, counts, subs, samples):
                 srow += [f"{d['pep']:,}", f"{d['prot']:,}"]
             rows_out.append(srow)
     tbl = os.path.join(out_dir, "NG_table.tsv")
-    with open(tbl, "w", newline="", encoding="utf-8-sig") as fh:
+    with _open_w(root, tbl, "w", newline="", encoding="utf-8-sig") as fh:
         for r in rows_out:
             fh.write(chr(9).join(r) + chr(10))
     try:
@@ -741,7 +750,7 @@ def write_conclusions(root, out_dir, counts, subs, st_map, samples):
             "",
         ]
     out = os.path.join(out_dir, "NG_figure_conclusions.md")
-    with open(out, "w", encoding="utf-8") as fh:
+    with _open_w(root, out, "w", encoding="utf-8") as fh:
         fh.write(chr(10).join(lines))
     return out
 

@@ -30,6 +30,15 @@ from collections import defaultdict
 _COMP = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def revcomp(seq):
     return seq.translate(_COMP)[::-1]
 
@@ -288,7 +297,7 @@ def build(workdir, sp, fna, gff, transcripts=None, flank_aa=12, min_aa=30,
     junc_seen = {}
     junc_rows = []
     reasons = defaultdict(int)
-    with open(prot_path, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(workdir, prot_path, "w", encoding="utf-8", newline="\n") as fh:
         for tid in sorted(txs):
             tx = txs[tid]
             nt, cuts, problems = splice(tx, seqs)
@@ -319,7 +328,7 @@ def build(workdir, sp, fna, gff, transcripts=None, flank_aa=12, min_aa=30,
             rows.append([tid, tx.get("gene", ""), tx["seqid"], tx["strand"],
                          len(tx["cds"]), len(nt), len(pep), len(jp), "ok"])
 
-    with open(junc_path, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(workdir, junc_path, "w", encoding="utf-8", newline="\n") as fh:
         n_junc = 0
         for tid, cut, pep in junc_rows:
             n_junc += 1
@@ -329,7 +338,7 @@ def build(workdir, sp, fna, gff, transcripts=None, flank_aa=12, min_aa=30,
     txorf_path = os.path.join(out_dir, "L2_txorf.faa")
     if transcripts:
         txseqs = read_fasta(transcripts)
-        with open(txorf_path, "w", encoding="utf-8", newline="\n") as fh:
+        with _open_w(workdir, txorf_path, "w", encoding="utf-8", newline="\n") as fh:
             for tid in sorted(txseqs):
                 for frame, start, pep in tx_orfs(txseqs[tid], min_aa=min_aa):
                     n_txorf += 1
@@ -338,7 +347,7 @@ def build(workdir, sp, fna, gff, transcripts=None, flank_aa=12, min_aa=30,
         log("转录本层：%d 条转录本 → %d 个 ORF" % (len(txseqs), n_txorf))
 
     stats_path = os.path.join(out_dir, "euk_stats.tsv")
-    with open(stats_path, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(workdir, stats_path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("transcript\tgene\tchr\tstrand\tn_cds\tnt_len\taa_len\t"
                  "junctions\tstatus\n")
         for r in rows:
@@ -372,8 +381,7 @@ def build(workdir, sp, fna, gff, transcripts=None, flank_aa=12, min_aa=30,
         if chk.get("expected"):
             log("预设核对（%s）：蛋白 %d / 文档 %d，偏差 %+.2f%%"
                 % (preset, n_prot, chk["expected"], chk["delta_pct"]))
-    with open(os.path.join(out_dir, "euk_manifest.json"), "w",
-              encoding="utf-8") as fh:
+    with _open_w(out_dir, os.path.join(out_dir, "euk_manifest.json"), "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, ensure_ascii=False, indent=1)
     log("完成：蛋白 %d / 连接肽 %d（唯一 %d）/ 转录本 ORF %d → %s"
         % (n_prot, n_junc, len(junc_seen), n_txorf, out_dir))

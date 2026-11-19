@@ -49,6 +49,15 @@ def _candidate_dirs():
     return [d for d in dirs if d]
 
 
+def _open_w(path, base, mode="w", **kw):
+    """写盘前确认目标在 base 之下：所有输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def find_tools(need=_TOOLS):
     """{name: path}；找不到的记 None。"""
     out = {}
@@ -166,7 +175,8 @@ def stringtie_one(bam, gtf_out, tools, threads=4, log=print):
 
 def merge_gtf(gtf_list, gff_ref, out_gtf, tools, log=print):
     lst = out_gtf + ".list.txt"
-    with open(lst, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(lst, os.path.dirname(os.path.abspath(out_gtf)),
+                 encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(gtf_list) + "\n")
     cmd = [tools["stringtie"], "--merge", "-G", gff_ref, "-o", out_gtf, lst]
     rc, _ = _run(cmd, log)
@@ -242,7 +252,8 @@ def tx_meta(merged_gtf, tmap, out_tsv, log=print):
                      info.get("class", ""), info.get("ref_gene", ""),
                      info.get("ref_tid", ""), c["fpkm"]])
     os.makedirs(os.path.dirname(out_tsv), exist_ok=True)
-    with open(out_tsv, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(out_tsv, os.path.dirname(os.path.abspath(out_tsv)),
+                 encoding="utf-8", newline="\n") as fh:
         fh.write("transcript_id\tchr\tstart\tend\tstrand\texons\tlength\tgene_id\t"
                  "gene_name\tclass_code\tref_gene\tref_transcript\tfpkm\n")
         for r in rows:
@@ -366,8 +377,10 @@ def import_assembly(workdir, sp, gff, gtf, log=print):
     meta_path = os.path.join(base, "tx_meta.tsv")
 
     n_seq, skipped = 0, 0
-    with open(fa_path, "w", encoding="utf-8", newline="\n") as fa, \
-            open(meta_path, "w", encoding="utf-8", newline="\n") as meta:
+    with _open_w(fa_path, os.path.dirname(os.path.abspath(fa_path)),
+                 encoding="utf-8", newline="\n") as fa, \
+            _open_w(meta_path, os.path.dirname(os.path.abspath(meta_path)),
+                    encoding="utf-8", newline="\n") as meta:
         meta.write("transcript_id\tchr\tstart\tend\tstrand\texons\tlength\t"
                    "source\tclass_code\tref_transcript\tgene_id\n")
         for tid in sorted(models):
@@ -386,7 +399,8 @@ def import_assembly(workdir, sp, gff, gtf, log=print):
 
     # tx_model.gff：原生注释原样 + 外部新增转录本（GFF3）
     n_add = 0
-    with open(gff_path, "w", encoding="utf-8", newline="\n") as out:
+    with _open_w(gff_path, os.path.dirname(os.path.abspath(gff_path)),
+                 encoding="utf-8", newline="\n") as out:
         with open(gff, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 out.write(line if line.endswith("\n") else line + "\n")
@@ -411,10 +425,10 @@ def import_assembly(workdir, sp, gff, gtf, log=print):
              "n_canonical": len(models) - n_add - skipped,
              "files": {"transcripts_fa": fa_path, "tx_model_gff": gff_path,
                        "tx_meta": meta_path}}
-    with open(os.path.join(base, "euktx_manifest.json"), "w", encoding="utf-8") as fh:
+    with _open_w(os.path.join(base, "euktx_manifest.json"), base, encoding="utf-8") as fh:
         json.dump(stats, fh, ensure_ascii=False, indent=1)
-    with open(os.path.join(base, "euktx_stats.tsv"), "w", encoding="utf-8",
-              newline="\n") as fh:
+    with _open_w(os.path.join(base, "euktx_stats.tsv"), base, encoding="utf-8",
+                 newline="\n") as fh:
         fh.write("item\tvalue\n")
         for k in ("n_transcripts", "n_canonical", "n_external", "skipped_short"):
             fh.write("%s\t%s\n" % (k, stats[k]))
@@ -485,10 +499,10 @@ def build(workdir, sp, fna, gff, fastq_dir, threads=8, samples=None,
              "tools": {k: os.path.basename(v or "") for k, v in tools.items()},
              "files": {"merged_gtf": merged, "tx_meta": os.path.join(base, "tx_meta.tsv"),
                        "transcripts_fa": tx_fa}}
-    with open(os.path.join(base, "euktx_manifest.json"), "w", encoding="utf-8") as fh:
+    with _open_w(os.path.join(base, "euktx_manifest.json"), base, encoding="utf-8") as fh:
         json.dump(stats, fh, ensure_ascii=False, indent=1)
-    with open(os.path.join(base, "euktx_stats.tsv"), "w", encoding="utf-8",
-              newline="\n") as fh:
+    with _open_w(os.path.join(base, "euktx_stats.tsv"), base, encoding="utf-8",
+                 newline="\n") as fh:
         fh.write("sample\treads\tmapped_pct\tbam\n")
         for s in align_stats:
             fh.write("%s\t%d\t%.2f\t%s\n" % (s["sample"], s["total"],

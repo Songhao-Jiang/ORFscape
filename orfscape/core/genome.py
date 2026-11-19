@@ -35,6 +35,15 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise RuntimeError(f"禁止重定向: {code}")
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def _guarded_urlopen(url, timeout=60):
     """SSRF 防护：https + 域名白名单 + DNS 公网校验 + 禁重定向。"""
     pr = urllib.parse.urlsplit(url)
@@ -150,18 +159,18 @@ def fetch_genome(species, out_dir, today="", accession=None, group=None):
                              ("genomic.fna", "_genomic.fna.gz")):
         url = f"{base}/{stem}{suffix}"
         gz_name = stem + suffix
-        with _guarded_urlopen(url) as resp, open(os.path.join(out_dir, gz_name), "wb") as fh:
+        with _guarded_urlopen(url) as resp, _open_w(out_dir, os.path.join(out_dir, gz_name), "wb") as fh:
             shutil.copyfileobj(resp, fh)
         gz_path = os.path.join(out_dir, gz_name)
         meta["files"][out_name] = {"sha256_gz": _sha256(gz_path),
                                    "size": os.path.getsize(gz_path)}
         with gzip.open(gz_path, "rb") as fi, \
-                open(os.path.join(out_dir, out_name), "wb") as fo:
+                _open_w(out_dir, os.path.join(out_dir, out_name), "wb") as fo:
             shutil.copyfileobj(fi, fo)
         os.remove(gz_path)
     n_prot = sum(1 for l in open(os.path.join(out_dir, "protein.faa"), encoding="utf-8")
                  if l.startswith(">"))
     meta["n_proteins"] = n_prot
-    with open(ver_path, "w", encoding="utf-8") as fh:
+    with _open_w(out_dir, ver_path, "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
     return meta

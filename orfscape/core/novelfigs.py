@@ -70,6 +70,15 @@ ZH_NOV = {
 }
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def T(en):
     from .i18n import get_lang
     return ZH_NOV.get(en, en) if get_lang() == "zh" else en
@@ -622,7 +631,7 @@ def write_table(root, out_dir, stats):
             fn = item[1]
             rows.append([lab] + [f"{fn(stats[k]):,}" for k in samples])
     tsv = os.path.join(out_dir, "NOV_screening_table.tsv")
-    with open(tsv, "w", newline="", encoding="utf-8-sig") as fh:
+    with _open_w(root, tsv, "w", newline="", encoding="utf-8-sig") as fh:
         for r in rows:
             fh.write("\t".join(r) + "\n")
     try:
@@ -779,7 +788,7 @@ def write_conclusions(root, out_dir, stats, acc, scores, official, dist):
             "",
         ]
     out = os.path.join(out_dir, "NOV_figure_conclusions.md")
-    with open(out, "w", encoding="utf-8") as fh:
+    with _open_w(root, out, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
     return out
 

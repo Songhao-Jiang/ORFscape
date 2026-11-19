@@ -26,6 +26,15 @@ from .report import (COLORS, COL1, COL2, _apply_zh_font, _save, _t,
 _SP_ORDER = []                                        # 物种出现顺序（配色用）
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def sp_col(code):
     """物种配色：按出现顺序取调色板，不写死项目专属物种代码。"""
     if code not in _SP_ORDER:
@@ -435,7 +444,7 @@ def write_conclusions(root, out_dir):
             "",
         ]
     out = os.path.join(out_dir, "QC_figure_conclusions.md")
-    with open(out, "w", encoding="utf-8") as fh:
+    with _open_w(root, out, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
     return out
 

@@ -47,6 +47,15 @@ for _a in _BASES:
 _COMP = str.maketrans("ACGTacgt", "TGCAtgca")
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def read_fasta_len(path):
     """(条数, 总 nt)——只数字符，不建序列对象，大基因组也不爆内存。"""
     n = nt = 0
@@ -283,7 +292,7 @@ def run(root, sp, min_aa=30, measure=True, log=print):
 
 def write_plan(d, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(path)), path, "w", encoding="utf-8", newline="\n") as fh:
         json.dump(d, fh, ensure_ascii=False, indent=2, sort_keys=True)
         fh.write("\n")
     return path

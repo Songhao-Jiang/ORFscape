@@ -29,6 +29,15 @@ from .novel import read_faa
 from .report import COLORS, COL1, COL2, _apply_zh_font, _save, load_tsv
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def _blast_bin():
     """BLAST+ 的 bin 目录：ORFSCAPE_BLAST / paths.local.json 优先，其次 PATH。"""
     p = localpaths.get("blast", r"D:\Bioinformatics\BLAST\ncbi-blast-2.15.0+\bin",
@@ -448,13 +457,13 @@ def run_homology(root, ann, seqs, out_dir, log=print):
         fasta = os.path.join(ANNOT_DIR, "uniprot_sprot.fasta")
         if not os.path.exists(fasta):
             import gzip
-            with gzip.open(SPROT_GZ, "rb") as fi, open(fasta, "wb") as fo:
+            with gzip.open(SPROT_GZ, "rb") as fi, _open_w(root, fasta, "wb") as fo:
                 for chunk in iter(lambda: fi.read(1 << 20), b""):
                     fo.write(chunk)
         db_sp = _make_db(fasta, "sprot", log=log)
     for sp, items in by_sp.items():
         qfaa = os.path.join(qdir, f"novel_{sp}.faa")
-        with open(qfaa, "w", encoding="utf-8") as fh:
+        with _open_w(root, qfaa, "w", encoding="utf-8") as fh:
             for r in items:
                 fh.write(">" + r["orf"] + chr(10))
                 s = seqs[r["orf"]]
@@ -563,7 +572,7 @@ def write_tables(out_dir, ann, zh):
             r.get("sp_ev", ""), r.get("self_func", ""), r.get("cross_func", ""),
         ])
     tbl = os.path.join(out_dir, "AN_table.tsv")
-    with open(tbl, "w", newline="", encoding="utf-8-sig") as fh:
+    with _open_w(out_dir, tbl, "w", newline="", encoding="utf-8-sig") as fh:
         for r in rows:
             fh.write("\t".join(r) + "\n")
     try:

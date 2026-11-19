@@ -56,6 +56,15 @@ _SAFE_DIR = ("05_novel", "05b_research", "06_validate", "06b_validate_research",
 _SAFE_FILE = ("novel_peptides.tsv", "novel_after_research.tsv", "novel_validated.tsv")
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def read_table_top(root, sub, filename):
     """读 root/sub/filename（顶层单文件，scandir 白名单）。"""
     if sub not in _SAFE_DIR or filename not in _SAFE_FILE:
@@ -323,8 +332,7 @@ def stage_run(root, rows, run_dir, mgf_dir, log=print):
                 best[key] = (sc, r)
         for key, (_sc, r) in best.items():
             title_map[key] = r
-        with open(os.path.join(mgf_dir, short + ".mgf"), "w",
-                  encoding="utf-8", newline="") as out:
+        with _open_w(mgf_dir, os.path.join(mgf_dir, short + ".mgf"), "w", encoding="utf-8", newline="") as out:
             for t, blk in blocks.items():
                 st, su = split_title(t)
                 if st != stem or f"{short}.{su}" not in title_map:
@@ -338,13 +346,13 @@ def stage_run(root, rows, run_dir, mgf_dir, log=print):
                 nr["File_Name"] = f"{short}.{su}"
                 new_rows.append(nr)
     psm_path = os.path.join(run_dir, "psm_file.tsv")
-    with open(psm_path, "w", newline="", encoding="utf-8") as fh:
+    with _open_w(root, psm_path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=kept_cols, delimiter="\t",
                            extrasaction="ignore")
         w.writeheader()
         w.writerows(new_rows)
     map_path = os.path.join(run_dir, "title_map.tsv")
-    with open(map_path, "w", newline="", encoding="utf-8") as fh:
+    with _open_w(root, map_path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh, delimiter="\t")
         w.writerow(["File_Name_new", "File_Name_orig", "species", "enzyme",
                     "peptide", "tier", "Proteins"])
@@ -393,7 +401,7 @@ predictor3_params\t
 
 def write_configs(run_dir, enzyme, psm_path, fasta, mgf_dir, iso_root):
     cfg1 = os.path.join(run_dir, "config_step1.txt")
-    with open(cfg1, "w", encoding="utf-8", newline="") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(cfg1)), cfg1, "w", encoding="utf-8", newline="") as fh:
         fh.write(CONFIG_STEP1_BODY.format(
             psm=psm_path.replace("\\", "/"), fasta=fasta.replace("\\", "/"),
             enzyme=ENZYME_KEY[enzyme], mgf=mgf_dir.replace("\\", "/"),
@@ -401,7 +409,7 @@ def write_configs(run_dir, enzyme, psm_path, fasta, mgf_dir, iso_root):
             primary=PRIMARY_PREDICTOR, pdeep2=PDEEP2_DIR.replace("\\", "/"),
             pypath=os.path.join(iso_root, "runtime", "python", "python.exe")))
     cfgp = os.path.join(run_dir, "config_predictor.txt")
-    with open(cfgp, "w", encoding="utf-8", newline="") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(cfgp)), cfgp, "w", encoding="utf-8", newline="") as fh:
         fh.write(CONFIG_PREDICTOR.format(
             conda=MINICONDA_DIR.replace("\\", "/"),
             ms2pip=MS2PIP_VENV.replace("\\", "/")))
@@ -419,7 +427,7 @@ def run_isopsv(run_dir, iso_root, log=print):
            if k not in ("LANG", "LC_ALL", "LC_CTYPE")}
     env["CONFIG"] = os.path.join(run_dir, "config_step1.txt")
     logf = os.path.join(run_dir, "isopsv_run.log")
-    with open(logf, "w", encoding="utf-8", errors="replace") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(logf)), logf, "w", encoding="utf-8", errors="replace") as fh:
         fh.write(f"# CONFIG={env['CONFIG']}\n# cwd={os.path.join(iso_root, 'code')}\n")
         fh.flush()
         p = subprocess.run([rscript, runner], shell=False, cwd=os.path.join(iso_root, "code"),
@@ -782,7 +790,7 @@ def write_report(root, verd, cards, out_name="06_validate", source="novel", log=
             rows_out.append(r2)
     fields = list(rows_out[0].keys()) if rows_out else []
     out_tsv = os.path.join(vdir, "novel_validated.tsv")
-    with open(out_tsv, "w", newline="", encoding="utf-8-sig") as fh:
+    with _open_w(root, out_tsv, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, delimiter="\t")
         w.writeheader()
         w.writerows(rows_out)
@@ -839,7 +847,7 @@ def write_report(root, verd, cards, out_name="06_validate", source="novel", log=
         lines.append("## 剔除原因（novel_doubt 分布，仅触发 doubt 规则者）")
         lines.extend(f"- {k}: {v}" for k, v in drop_reasons.most_common(15))
     sumf = os.path.join(vdir, "validate_summary.md")
-    with open(sumf, "w", encoding="utf-8") as fh:
+    with _open_w(root, sumf, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     log(f"  写出 {out_tsv}")
     log(f"  写出 {sumf}")

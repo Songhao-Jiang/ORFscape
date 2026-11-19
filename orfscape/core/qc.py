@@ -13,6 +13,15 @@ from collections import Counter
 from .i18n import L
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def parse_spectra(path):
     """pFind-Filtered.spectra → 统计 dict（PSM 数、特异性分布、漏切分布、肽段数）。"""
     if not os.path.exists(path):
@@ -70,7 +79,7 @@ def build_qc(raw_info_tsv, annot_root, out_tsv, out_md):
                              f" {st['pct_full_cleavage']}% < 90%")
     fields = ["task", "species", "n_psm", "n_peptide", "pct_full_cleavage",
               "pct_mc0", "specificity_dist", "mc_dist"]
-    with open(out_tsv, "w", newline="", encoding="utf-8-sig") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(out_tsv)), out_tsv, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, delimiter="\t")
         w.writeheader()
         w.writerows(out_rows)
@@ -83,7 +92,7 @@ def build_qc(raw_info_tsv, annot_root, out_tsv, out_md):
                 warns.append(f"{r['raw_file'][-40:]}: IT 触顶 {sat}% 且 MS2 AGC Fill {fill} <0.1")
         except ValueError:
             pass
-    with open(out_md, "w", encoding="utf-8") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(out_md)), out_md, "w", encoding="utf-8") as fh:
         fh.write(L(f"# QC 摘要（E1 后）") + "\n\n"
                  f"- {L('任务数（raw×CV）')}: {len(out_rows)}\n"
                  f"- {L('警告数')}: {len(warns)}\n\n" + L("## 警告") + "\n")

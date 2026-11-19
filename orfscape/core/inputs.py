@@ -11,6 +11,15 @@ GROUP_FIELDS = ["raw_file", "species_code", "species", "sample_type", "condition
                 "mirror_group_id", "pattern", "group_dir"]
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def safe_segment(name):
     """校验单段路径名（物种代码 / 文件名）：禁止分隔符与父目录跳转。"""
     s = str(name or "").strip()
@@ -167,7 +176,7 @@ def build_groups(raw_paths):
 
 def save_groups_csv(rows, out_csv):
     """分组表落盘（用户可手改后再喂回）。"""
-    with open(out_csv, "w", newline="", encoding="utf-8-sig") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(out_csv)), out_csv, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=GROUP_FIELDS + ["path"], extrasaction="ignore")
         w.writeheader()
         for r in rows:

@@ -18,6 +18,15 @@ import subprocess
 from .. import localpaths
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def _roots():
     """探测根：ORFSCAPE_TOOL_ROOTS（os.pathsep 分隔）在前，其后常见安装位置。"""
     env = os.environ.get("ORFSCAPE_TOOL_ROOTS") or ""
@@ -166,7 +175,7 @@ FIELDS = ["name", "category", "need", "status", "version", "path", "note"]
 
 def write_report(rows, out_tsv):
     import csv
-    with open(out_tsv, "w", newline="", encoding="utf-8-sig") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(out_tsv)), out_tsv, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=FIELDS, delimiter="\t", extrasaction="ignore")
         w.writeheader()
         for r in rows:

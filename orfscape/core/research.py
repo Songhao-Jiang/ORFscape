@@ -44,6 +44,15 @@ LAYER_PREFIX = ("L2_", "L1_", "L3_", "L3|", "L6_", "L6|", "L2|", "LJR|",
 
 
 # ------------------------------------------------------------------ 小工具
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def _core(p):
     """去两端 K/R（镜像核心区）。"""
     while p and p[0] in "KR":
@@ -178,7 +187,7 @@ def build_db(root, sp, cand, out_dir, mode="both", log=print):
     os.makedirs(out_dir, exist_ok=True)
     out_faa = os.path.join(out_dir, "db_research_%s.faa" % sp)
     pool = (picked if mode == "novel" else annot + picked)
-    with open(out_faa, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(root, out_faa, "w", encoding="utf-8", newline="\n") as fh:
         for h, s in pool:
             fh.write(">" + h + "\n")
             for i in range(0, len(s), 60):
@@ -248,7 +257,7 @@ def _run_one(fasta, tdir_root, t, thread, pfind_bin, fp=""):
     cfg_text = pfsearch.build_cfg_lines(_fw(fasta), _fw(t["mgf"]), _fw(tdir),
                                         t["short"], t["enzyme"], thread=thread)
     cfg = os.path.join(tdir, t["short"] + ".cfg")
-    with open(cfg, "w", encoding="gbk", newline="\n") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(cfg)), cfg, "w", encoding="gbk", newline="\n") as fh:
         fh.write(cfg_text)
     rc = pfsearch.run_searcher(cfg, pfind_bin)
     n = pfsearch.count_result_rows(spec)
@@ -383,8 +392,7 @@ def write_species(out_dir, sp, rows, report, dbstat, log=print):
     d = os.path.join(out_dir, sp)
     os.makedirs(d, exist_ok=True)
     # 1) 任务报告
-    with open(os.path.join(d, "research_tasks.tsv"), "w", newline="",
-              encoding="utf-8-sig") as fh:
+    with _open_w(d, os.path.join(d, "research_tasks.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh, delimiter="\t")
         w.writerow(["task", "enzyme", "status", "psm", "mgf"])
         for r in report:
@@ -394,8 +402,7 @@ def write_species(out_dir, sp, rows, report, dbstat, log=print):
     fields = ["peptide", "protein", "locus", "tier_old", "tier_new",
               "psm_old", "psm_new", "enzymes_old", "enzymes_new",
               "enzymes_all", "is_new"]
-    with open(os.path.join(d, "novel_after_research.tsv"), "w", newline="",
-              encoding="utf-8-sig") as fh:
+    with _open_w(d, os.path.join(d, "novel_after_research.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, delimiter="\t",
                            extrasaction="ignore")
         w.writeheader()
@@ -407,8 +414,7 @@ def write_species(out_dir, sp, rows, report, dbstat, log=print):
     for v in rows.values():
         if v["tier_old"] and v["tier_old"] != v["tier_new"]:
             mig[(v["tier_old"], v["tier_new"])] += 1
-    with open(os.path.join(d, "tier_migration.tsv"), "w", newline="",
-              encoding="utf-8-sig") as fh:
+    with _open_w(d, os.path.join(d, "tier_migration.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh, delimiter="\t")
         w.writerow(["from_tier", "to_tier", "n"])
         for (a, b), n in sorted(mig.items()):
@@ -450,7 +456,7 @@ def write_summary(out_dir, stats, log=print):
                         n.get("Tier3", 0),
                         ", ".join("%s=%d" % (k, v)
                                   for k, v in sorted(s["migration"].items())) or "无"))
-    with open(p, "w", encoding="utf-8") as fh:
+    with _open_w(out_dir, p, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     log("  写出 %s" % p)
     return p

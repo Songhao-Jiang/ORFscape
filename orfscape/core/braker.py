@@ -29,6 +29,15 @@ for _a in _B:
             _i += 1
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def revcomp(nt):
     return nt.translate(str.maketrans("ACGTNacgtn", "TGCANtgcan"))[::-1]
 
@@ -76,7 +85,7 @@ def build_run_script(path, genome, bam, protein, out_dir, threads=8,
         '  --species="%s" \\' % species,
         '  --gff3',
     ]
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(out_dir, path, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
     return path
 
@@ -159,7 +168,7 @@ def gtf_to_protein(gtf_path, genome_path):
 
 def write_faa(path, recs):
     """写蛋白 FASTA（60 列折行）。path 由调用方给绝对路径。"""
-    with open(path, "w", encoding="utf-8") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(path)), path, "w", encoding="utf-8") as fh:
         for pid, seq in recs:
             fh.write(">%s\n" % pid)
             for i in range(0, len(seq), 60):

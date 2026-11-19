@@ -30,6 +30,15 @@ for a in _B:
 IL = str.maketrans("IL", "LL")  # I→L 归一
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def il_norm(seq):
     return seq.upper().translate(IL)
 
@@ -99,7 +108,7 @@ def read_faa(path):
 
 
 def write_faa(path, records):
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with _open_w(os.path.dirname(os.path.abspath(path)), path, "w", encoding="utf-8", newline="\n") as fh:
         for h, s in records:
             fh.write(">" + h + "\n")
             for i in range(0, len(s), 60):

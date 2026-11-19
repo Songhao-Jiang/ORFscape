@@ -21,6 +21,42 @@ from .. import localpaths
 # ENA 域名白名单（Mimosa 约束）
 _ENA = "https://ftp.sra.ebi.ac.uk"
 _ACC_RX = re.compile(r"^[A-Za-z]{1,3}\d{4,}$")     # SRR/ERR/DRR + 数字
+_ALLOWED_HOSTS = ("www.ebi.ac.uk", "ftp.sra.ebi.ac.uk")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """拒绝一切重定向：白名单只对原始 URL 有效，跟一跳就可能被带到别处。"""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("拒绝重定向: %s" % newurl)
+
+
+def _fetch(url, timeout=15):
+    """带边界校验的 GET：协议/主机白名单/解析后 IP 三重检查，且不跟随重定向。"""
+    import ipaddress
+    import socket
+    sp = urllib.parse.urlsplit(str(url))
+    if sp.scheme not in ("http", "https"):
+        raise ValueError("只允许 http/https: %s" % url)
+    host = (sp.hostname or "").lower()
+    if host not in _ALLOWED_HOSTS:
+        raise ValueError("主机不在白名单: %s" % host)
+    for info in socket.getaddrinfo(host, None):
+        ip = ipaddress.ip_address(info[4][0])
+        if (ip.is_private or ip.is_loopback or ip.is_reserved
+                or ip.is_link_local or ip.is_multicast):
+            raise ValueError("解析到受限地址: %s -> %s" % (host, ip))
+    opener = urllib.request.build_opener(_NoRedirect)
+    return opener.open(url, timeout=timeout)
+
+
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
 
 
 def ena_fastq_urls(run_acc):
@@ -37,7 +73,7 @@ def ena_fastq_urls(run_acc):
                                 "fields": "fastq_ftp", "format": "json"})
     url = "https://www.ebi.ac.uk/ena/portal/api/filereport?" + q
     try:
-        resp = urllib.request.urlopen(url, timeout=15)
+        resp = _fetch(url, timeout=15)
         data = json.loads(resp.read())
         ftp = data[0].get("fastq_ftp", "") if data else ""
         if ftp:
@@ -65,7 +101,13 @@ def download_fastq(run_acc, out_dir, max_mb=500, mates=2):
             paths.append(fpath)
             continue
         try:
-            urllib.request.urlretrieve(url, fpath)
+            # 走同一套边界校验（协议/主机/IP），写入路径已由 out_dir 收敛
+            with _fetch(url, timeout=120) as resp, _open_w(out_dir, fpath, "wb") as fh:
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
             paths.append(fpath)
         except Exception:
             pass
@@ -75,7 +117,7 @@ def download_fastq(run_acc, out_dir, max_mb=500, mates=2):
 def sample_reads_to_fasta(fastq_gz, out_fasta, n_reads=100000):
     """从 FASTQ.gz 采样前 n 条读段写 FASTA（单端）。"""
     count = 0
-    with gzip.open(fastq_gz, "rt") as fi, open(out_fasta, "w") as fo:
+    with gzip.open(fastq_gz, "rt") as fi, _open_w(os.path.dirname(os.path.abspath(out_fasta)), out_fasta, "w") as fo:
         for i, line in enumerate(fi):
             if i % 4 == 0 and line.startswith("@"):
                 if count >= n_reads:
@@ -152,7 +194,7 @@ def extract_genomic_regions(genome_fna, regions, out_fasta):
     # 只取第一个 contig（细菌通常单染色体）
     chr_name = list(seqs.keys())[0]
     chr_seq = seqs[chr_name]
-    with open(out_fasta, "w") as fo:
+    with _open_w(os.path.dirname(os.path.abspath(out_fasta)), out_fasta, "w") as fo:
         for i, (s, e, d) in enumerate(regions):
             fo.write(f">txregion_{i}_{chr_name}_{s}_{e}\n")
             fo.write(chr_seq[s:e] + "\n")

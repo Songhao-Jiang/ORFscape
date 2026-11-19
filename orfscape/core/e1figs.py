@@ -26,6 +26,15 @@ from .novel import iln
 from .report import COLORS, COL1, COL2, _apply_zh_font, _save, _t, load_tsv
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def _core(seq):
     """镜像核心区：去两端 K/R + I/L 归一（Tier1 同口径）。"""
     s = seq.upper()
@@ -869,7 +878,7 @@ def write_conclusions(root, out_dir, agg):
             "",
         ]
     out = os.path.join(out_dir, "E1_QC_figure_conclusions.md")
-    with open(out, "w", encoding="utf-8") as fh:
+    with _open_w(root, out, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
     return out
 
@@ -939,7 +948,7 @@ def write_sample_table(root, out_dir, agg):
         rows.append(["Mirror-enzyme evidence proteins"] +
                     [f"{mirror(g,'prots'):,}" for g in cols])
     tsv = os.path.join(out_dir, "E1_sample_summary.tsv")
-    with open(tsv, "w", newline="", encoding="utf-8-sig") as fh:
+    with _open_w(root, tsv, "w", newline="", encoding="utf-8-sig") as fh:
         for r in rows:
             fh.write("\t".join(r) + "\n")
     # XLSX（Arial 9pt、表头加粗、首列左对齐）

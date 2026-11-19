@@ -64,6 +64,15 @@ PARENT = os.pardir
 _PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]*$")
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def _now():
     return time.strftime("%H:%M:%S")
 
@@ -233,13 +242,13 @@ def run(args):
     if os.path.isfile(pth["stop"]):
         rm_checked(pth["stop"], workdir)
     # 新一轮：重建事件文件，避免 GUI 读到上一轮的行
-    with open(pth["events"], "w", encoding="utf-8"):
+    with _open_w(os.path.dirname(os.path.abspath(pth["events"])), pth["events"], "w", encoding="utf-8"):
         pass
     os.environ[progress.ENV_PATH] = pth["events"]
     if args.lang:
         os.environ["ORFSCAPE_LANG"] = args.lang
 
-    log_fh = open(pth["log"], "w", encoding="utf-8", newline="\n")
+    log_fh = _open_w(os.path.dirname(os.path.abspath(pth["log"])), pth["log"], "w", encoding="utf-8", newline="\n")
 
     def say(text, event=True, stage=None):
         line = "%s %s" % (_now(), text)
@@ -362,7 +371,7 @@ def run(args):
         manifest["sec"] = round(total, 1)
         manifest["status"] = status_all
         try:
-            with open(pth["manifest"], "w", encoding="utf-8") as fh:
+            with _open_w(os.path.dirname(os.path.abspath(pth["manifest"])), pth["manifest"], "w", encoding="utf-8") as fh:
                 json.dump(manifest, fh, ensure_ascii=False, indent=2)
         except OSError:
             pass

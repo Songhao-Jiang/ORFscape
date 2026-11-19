@@ -23,6 +23,15 @@ from orfscape.core.rnaabund import (load_samples, abundance_for_span,
                                   assembled_models, tx_support)
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def read_gff_cds(path):
     """locus_tag / protein_id → (contig, start, end, strand)"""
     out = {}
@@ -365,8 +374,7 @@ def main(argv=None):
                 out_rows.append(r)
     if out_rows:
         cols = list(out_rows[0].keys())
-        with open(os.path.join(out, "spectra_TP.tsv"), "w", newline="",
-                  encoding="utf-8-sig") as fh:
+        with _open_w(out, os.path.join(out, "spectra_TP.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
             w = csv.DictWriter(fh, fieldnames=cols, delimiter="\t",
                                extrasaction="ignore")
             w.writeheader()

@@ -27,6 +27,15 @@ from collections import Counter
 import pandas as pd
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def iln(s):
     return str(s or "").strip().upper().replace("I", "L")
 
@@ -349,7 +358,7 @@ def main(argv=None):
               ""]
 
     # ---- 序列层面旁证已在「一、已注释肽段」表中给出，此处不再重复
-    with open(os.path.join(out, "stats_summary.md"), "w", encoding="utf-8") as fh:
+    with _open_w(out, os.path.join(out, "stats_summary.md"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
 
     print("\n".join(lines))

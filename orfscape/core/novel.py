@@ -20,6 +20,15 @@ from collections import defaultdict
 IL = str.maketrans("IL", "LL")
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def iln(s):
     return s.upper().translate(IL)
 
@@ -265,8 +274,7 @@ def build_species_novel(sp, db_dir, annot_root, disc_root, out_dir, log=print):
     # ---- 落盘
     fields = ["peptide", "layer", "protein", "source", "locus", "tier",
               "enzymes_str", "psm", "n_tasks", "decoy"]
-    with open(os.path.join(out_dir, "novel_peptides.tsv"), "w", newline="",
-              encoding="utf-8-sig") as fh:
+    with _open_w(out_dir, os.path.join(out_dir, "novel_peptides.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, delimiter="\t", extrasaction="ignore")
         w.writeheader()
         w.writerows(sorted(novs, key=lambda x: (x["tier"], -x["psm"])))

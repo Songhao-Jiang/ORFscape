@@ -48,6 +48,15 @@ WEIGHTS = {"P0": 1.0, "P1": 3.0, "D0": 10.0, "C": 2.0, "E1": 9.0, "QC": 0.4,
 
 
 # ---------------------------------------------------------------- 格式化
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def fmt_bytes(n, decimals=1):
     if n is None:
         return "n/a"
@@ -215,7 +224,7 @@ def save_calibration(workdir, state):
     data["stages"] = prev
     data["updated"] = __import__("time").strftime("%Y-%m-%dT%H:%M:%S")
     try:
-        with open(p, "w", encoding="utf-8") as fh:
+        with _open_w(workdir, p, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, indent=1)
     except OSError:
         return None

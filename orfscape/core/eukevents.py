@@ -55,6 +55,15 @@ CLASS_LABEL = {
 _IG_TCR = re.compile(r"^(IGH|IGK|IGL|TCR)[A-Z0-9]*$", re.I)
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def _is_ig_tcr(name):
     return bool(_IG_TCR.match(str(name or "").split(".")[0]))
 
@@ -439,7 +448,7 @@ def run(workdir, sp, rows, out_dir=None, log=print):
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
         path = os.path.join(out_dir, "euk_events.tsv")
-        with open(path, "w", encoding="utf-8", newline="") as fh:
+        with _open_w(workdir, path, "w", encoding="utf-8", newline="") as fh:
             fh.write("peptide\tclass\tgene\ttier\tn_events\tall_classes\torf\tpos\tref_gap\n")
             for pep in sorted(main):
                 v = main[pep]

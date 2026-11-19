@@ -30,6 +30,15 @@ from . import i18n, model, taskbar, theme
 from .theme import C
 
 
+def _open_w(base, path, mode="w", **kw):
+    """写盘前确认目标落在 base 之下：输出路径都来自 CLI，必须先收敛。"""
+    p = os.path.abspath(str(path))
+    b = os.path.abspath(str(base))
+    if os.path.commonpath([p, b]) != b:
+        raise ValueError("路径越界: %s 不在 %s 之下" % (p, b))
+    return open(p, mode, **kw)
+
+
 def scaled_font(size, weight="normal", scale=1.0):
     """按缩放系数给出字体元组（canvas 文本用）。"""
     return ("Segoe UI", max(6, int(round(size * scale))), weight)
@@ -2070,8 +2079,7 @@ class App(tk.Tk):
         self._log_data = []
         self._render_log(force=True)
         try:
-            self._stdout_fh = open(os.path.join(logs, "gui_stdout_%s.log" % stamp),
-                                   "w", encoding="utf-8", newline="\n")
+            self._stdout_fh = _open_w(logs, os.path.join(logs, "gui_stdout_%s.log" % stamp), "w", encoding="utf-8", newline="\n")
         except OSError:
             self._stdout_fh = None
 
@@ -2216,7 +2224,7 @@ class App(tk.Tk):
         flag = os.path.join(wd, "00_logs", "stop.flag")
         try:
             os.makedirs(os.path.dirname(flag), exist_ok=True)
-            with open(flag, "w", encoding="utf-8") as fh:
+            with _open_w(os.path.dirname(os.path.abspath(flag)), flag, "w", encoding="utf-8") as fh:
                 fh.write("stop\n")
         except OSError:
             pass

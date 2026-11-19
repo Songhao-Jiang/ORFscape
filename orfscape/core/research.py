@@ -285,10 +285,16 @@ def run_tasks(fasta, out_root, sp, tasks, pfind_bin, thread=5, workers=4, log=pr
 
 # ------------------------------------------------------------------ 收集与判定
 def _excluders(root, sp):
-    """四滤原料：L0 消化集、L0 串接序列、E1 实测肽。"""
+    """四滤原料：L0 消化集、L0 串接序列、E1 实测肽。
+
+    真核 eukbuild 的 L0 头是 `L0|<tid>|...`（竖线），原核是 `L0_<acc>`；
+    只认 `L0_` 会让真核项目拿到**空排除集**——四滤形同虚设，
+    回搜出的已注释肽整批漏进新肽表（H99 实测漏 100 条）。
+    """
     db_dir = os.path.join(root, "02_db", sp)
     recs = read_faa(os.path.join(db_dir, "db_annot.faa"))
-    l0 = [(h, s) for h, s in recs if h.startswith("L0_")]
+    l0 = [(h, s) for h, s in recs
+          if h.startswith("L0_") or h.startswith("L0|")]
     known = set()
     for _, s in l0:
         known.update(digest_krc(s))

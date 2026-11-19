@@ -36,14 +36,17 @@ def ena_fastq_urls(run_acc):
     return None
 
 
-def download_fastq(run_acc, out_dir, max_mb=500):
-    """ENA 直下 FASTQ（.fastq.gz），返回 [R1 路径, R2 路径]。"""
+def download_fastq(run_acc, out_dir, max_mb=500, mates=2):
+    """ENA 直下 FASTQ（.fastq.gz），返回已下载的文件列表。
+
+    `mates=1` 只取 R1：L6 只要读段级覆盖，单端即可，下载量减半。
+    """
     os.makedirs(out_dir, exist_ok=True)
     urls = ena_fastq_urls(run_acc)
     if not urls:
         return None
     paths = []
-    for i, url in enumerate(urls, 1):
+    for i, url in enumerate(urls[:max(1, int(mates))], 1):
         fname = f"{run_acc}_{i}.fastq.gz"
         fpath = os.path.join(out_dir, fname)
         if os.path.exists(fpath) and os.path.getsize(fpath) > 1000:
@@ -144,12 +147,26 @@ def extract_genomic_regions(genome_fna, regions, out_fasta):
     return len(regions)
 
 
-def run_orfipy(input_fasta, out_pep, orfipy_exe):
-    """orfipy 六框 ORF 调用。"""
-    cmd = [str(orfipy_exe), str(input_fasta), "--pep", str(out_pep),
-           "--min", "30", "--start-codons", "ATG,GTG,TTG,CTG"]
-    r = subprocess.run(cmd, shell=False, capture_output=True)
-    return r.returncode == 0
+def run_orfipy(input_fasta, out_pep, orfipy_exe, min_nt=30, table=11,
+               starts="ATG,GTG,TTG,CTG"):
+    """orfipy 六框 ORF 调用。
+
+    orfipy 0.0.4 的坑：`--pep` 只收**文件名**（会拼到 `--outdir` 下），
+    且没有 `--start-codons`（用 `--start`）。旧写法在本机恒失败，L6 层静默为空。
+    遗传密码默认 table 11（细菌/古菌：TGA=W）；table 1 会把富 TGA 的 ORF
+    在每个 TGA 处截断，对高 GC 的分枝杆菌属尤其严重。
+    """
+    exe = os.path.abspath(str(orfipy_exe))
+    if not os.path.isfile(exe):
+        return False
+    out_dir = os.path.dirname(os.path.abspath(str(out_pep))) or "."
+    os.makedirs(out_dir, exist_ok=True)
+    pep_name = os.path.basename(str(out_pep))
+    r = subprocess.run([exe, os.path.abspath(str(input_fasta)), "--outdir", out_dir,
+                        "--pep", pep_name, "--min", str(int(min_nt)), "--strand", "b",
+                        "--table", str(int(table)), "--start", str(starts)],
+                       shell=False, capture_output=True)
+    return r.returncode == 0 and os.path.isfile(os.path.join(out_dir, pep_name))
 
 
 def _blastn_exe(tools_dir=""):
@@ -161,12 +178,19 @@ def _blastn_exe(tools_dir=""):
     return cand if os.path.isfile(cand) else ""
 
 
-def build_l6(species_code, genome_fna, sra_tsv, work_dir, tools_dir, log=print):
-    """L6 层全流程。"""
-    import tempfile
+def build_l6(species_code, genome_fna, sra_tsv, work_dir, tools_dir, log=print,
+             n_reads=50000, min_depth=3, min_len=90, table=11, mates=1, max_runs=6):
+    """L6 层全流程。
+
+    `mates=1` 只下 R1（读段级覆盖够用）；`table=11` 细菌/古菌密码表（TGA=W）。
+    产物同时落到 `02_tx/<sp>/L6_tx_orfs.faa`（旧式头）与
+    `02_db/<sp>/L6_tx_orfs.faa`（供 dbbuild 的 build_l6 过滤入层）。
+    """
+    import shutil
     from .dbbuild import read_faa, il_norm, digest
     tx_dir = os.path.join(work_dir, "02_tx", species_code)
     os.makedirs(tx_dir, exist_ok=True)
+    db_dir = os.path.join(work_dir, "02_db", species_code)
     fastq_dir = os.path.join(tx_dir, "fastq")
     blastn = _blastn_exe(tools_dir)
     if not blastn:
@@ -179,14 +203,14 @@ def build_l6(species_code, genome_fna, sra_tsv, work_dir, tools_dir, log=print):
     runs = []
     with open(sra_tsv, newline="", encoding="utf-8-sig") as fh:
         runs = [r["run"] for r in csv.DictReader(fh, delimiter="\t")]
-    for i, run in enumerate(runs[:6], 1):  # 取前 6 个 run（控制时间）
-        log(f"  [{species_code}] run {i}/{min(len(runs),6)}: {run}")
-        fq = download_fastq(run, fastq_dir)
+    for i, run in enumerate(runs[:max_runs], 1):  # 默认取前 6 个 run（控制时间）
+        log(f"  [{species_code}] run {i}/{min(len(runs), max_runs)}: {run}")
+        fq = download_fastq(run, fastq_dir, mates=mates)
         if not fq:
             log(f"    下载失败，跳过")
             continue
         fa = os.path.join(tx_dir, f"{run}_sample.fa")
-        n = sample_reads_to_fasta(fq[0], fa, n_reads=50000)
+        n = sample_reads_to_fasta(fq[0], fa, n_reads=n_reads)
         log(f"    采样 {n} 读段")
         bt = os.path.join(tx_dir, f"{run}_blast.tsv")
         if blastn_reads(fa, genome_fna, bt, blastn):
@@ -200,7 +224,7 @@ def build_l6(species_code, genome_fna, sra_tsv, work_dir, tools_dir, log=print):
     # 2. 合并覆盖区域
     all_regions = []
     for bt in all_blast:
-        all_regions.extend(coverage_regions(bt, min_depth=3, min_len=90))
+        all_regions.extend(coverage_regions(bt, min_depth=min_depth, min_len=min_len))
     # 去重合并
     all_regions.sort()
     merged = []
@@ -215,10 +239,13 @@ def build_l6(species_code, genome_fna, sra_tsv, work_dir, tools_dir, log=print):
     n_reg = extract_genomic_regions(genome_fna, merged, regions_fa)
     orfs_pep = os.path.join(tx_dir, "L6_tx_orfs.faa")
     if orfipy and os.path.isfile(orfipy):
-        ok = run_orfipy(regions_fa, orfs_pep, orfipy)
+        ok = run_orfipy(regions_fa, orfs_pep, orfipy, table=table)
         if ok:
             n_orf = sum(1 for l in open(orfs_pep) if l.startswith(">"))
             log(f"  [{species_code}] L6 ORF {n_orf} 条 → {orfs_pep}")
+            if os.path.isdir(db_dir):
+                shutil.copyfile(orfs_pep, os.path.join(db_dir, "L6_tx_orfs.faa"))
+                log(f"  [{species_code}] 入层副本 → 02_db/{species_code}/L6_tx_orfs.faa")
             return orfs_pep
     log(f"  [{species_code}] orfipy 不可用或失败")
     return None

@@ -115,17 +115,18 @@ def build_groups(raw_paths):
             "path": str(p),
             "group_dir": str(p.parent),
         })
-        # 预拆分电压后缀（_45.raw / _-45.raw / _65.raw）。
+        # 预拆分电压后缀（_45.raw / _-45.raw / _65.raw / 少见写法 _45v.raw、_-65v.raw）。
         # 守卫：|CV| 须在 20–100（FAIMS 合理区间），避免 Mixture_1..6 / M1..M7 这类
         # 馏分编号误判为电压后缀。
         g["pre_split_cv"] = ""
-        m_cv = re.search(r"_(-?\d{1,3})\.raw$", p.name)
+        m_cv = re.search(r"_(-?\d{1,3})v?\.raw$", p.name, re.IGNORECASE)
         if m_cv and 20 <= abs(int(m_cv.group(1))) <= 100:
             g["pre_split_cv"] = m_cv.group(1)
         rows.append(g)
 
     # 预拆分子 ↔ 原 raw 对应：stem 去掉 _CV 后缀即原文件 stem
-    pre_split_stems = {re.sub(r"_(-?\d{1,3})$", "", r["raw_file"][:-4]) for r in rows if r["pre_split_cv"]}
+    pre_split_stems = {re.sub(r"_(-?\d{1,3})v?$", "", r["raw_file"][:-4], flags=re.IGNORECASE)
+                       for r in rows if r["pre_split_cv"]}
     for r in rows:
         stem = r["raw_file"][:-4]
         r["superseded"] = "yes" if (not r["pre_split_cv"] and stem in pre_split_stems) else ""

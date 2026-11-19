@@ -42,12 +42,14 @@ is how novel peptides are traced back to the layer that produced them.
 | C build | `dbbuild` | L0/L2 non-empty; `L1_coords.tsv` when L1 exists |
 | E1 annotated search | `e1` | tasks == MGFs, PSM > 0 |
 | QC | `qc`, `qcfigs`, `e1figs` | figures and tables exist |
+| Predictor baseline (recommended) | `predbench` | `04a_qc/predictor_summary.tsv` with a `chosen` predictor |
 | E2 discovery search | `e2` | tasks == MGFs × databases, PSM > 0 |
 | P6 novel peptides | `novel` | rows > 0; layer-hit pattern matches non-empty layers |
 | P6b re-search | `research` | merged ≥ P6; candidate DB ≪ full DB |
 | P7 arbitration | `validate` | KEEP > 0; every MISSING has a reason |
 | P8 events / annotation | `novgene`, `novannot`, `novreport` | events > 0, nothing unlocated |
 | P9 figures | `novelfigs` | funnel and parameter-comparison figures |
+| Result pack | `pack` | `result_<run-start YYYYMMDD>/` with report, tables, figures and a README |
 
 `orfscape run` chains all of them in child processes, writes a structured event
 stream to `00_logs/progress.jsonl`, and stops on the first failed gate instead of
@@ -131,7 +133,7 @@ Nothing personal is hard-coded; the repository ships no absolute paths.
 ORFscape/
 ├── orfscape/            package: cli, orchestrator, progress/runlog/estimator,
 │                        checks, sysmon, config, core/, gui/, tools/
-├── tests/               7 test entries + visual baseline
+├── tests/               8 test entries + visual baseline
 ├── scripts/             result-pack builders (P13 tables/figures/PDF), fetch helpers
 ├── docs/                GUI manual, screenshots
 ├── integrations/        agent runbook + ZCode / Claude Code / generic adapters
@@ -150,15 +152,16 @@ python tests/gui_visual.py         # pixel regression below the resource strip
 python tests/gui_run.py            # plan → cancel → real run
 python tests/test_gui_lint.py      # unused-import scan
 python tests/test_eukbuild.py      # synthetic +/− strand genes, codon tables, presets
+python tests/test_eukevents.py     # seven event classes, junction blocks, peptide-level normalisation
 python -m orfscape.checks --workdir <proj> --stage EUK
 ```
 
 ## Limitations (v0.1)
 
-- Eukaryotic **search** is not wired: `eukbuild` produces the layers and the gate,
-  but E1/E2 still assume the prokaryotic database layout.
-- `LJR|` / `L2|` are not yet in the novel-peptide layer whitelist, and novel
-  peptides spanning an intron are not located by transcript coordinates yet.
+- Eukaryotic **search** is wired only at the database level: `dbbuild` assembles the
+  spliced layers (L0 + junction → `db_aug`, transcript ORFs → `db_6f`), and
+  `novgene --events euk` classifies events in seven classes at peptide level, but no
+  eukaryotic MS dataset has been run through E1/E2 yet.
 - BRAKER3 is script generation only (GeneMark-ETP/AUGUSTUS must be installed).
 - Prodigal is not bundled; without it the ab initio layer is skipped explicitly.
 - Card thresholds are recomputed per run from Tier1 — never compare KEEP counts

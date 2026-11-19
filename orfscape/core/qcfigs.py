@@ -220,6 +220,11 @@ def qc4_method(root, out_dir):
     for m in re.finditer(r"CV(-?\d+):res(\d+)/(\d+):IT(\d+)/(\d+):"
                          r"cyc([\d.]+)s?:nce([\d.]+)", seg):
         cv[m.group(1)] = m
+    # 仪器方法没有嵌进 raw（rawmethod 返回空）时无法画方法参数图：明确跳过，
+    # 不要让 IndexError 把后面的 QC5 一起带走（TP 实测 36 张 raw 全为空）。
+    if not seg or not cv:
+        print("  [qc4] 方法段为空（raw 未嵌入仪器方法），跳过 QC4")
+        return None
     def seg_v(k, g):
         return [cv[c].group(g) for c in sorted(cv, key=lambda x: -int(x))]
     res1, res2 = seg_v("cv", 2)[0], seg_v("cv", 3)[0]
@@ -269,6 +274,12 @@ def qc4_method(root, out_dir):
 # ---------------------------------------------------------------- QC5
 def qc5_it_agc(root, out_dir):
     rows = _sorted_rows(root)
+    # IT 触顶率/填充率任一缺测（如 raw 未给 AGC 归一化目标）就不能画这一图：
+    # 直接跳过，避免 ''.float 崩掉整条 qcfigs。
+    need = ("med_it_ms2", "it_sat_pct", "med_fill_ms1", "med_fill_ms2")
+    if any(not str(r.get(k) or "").strip() for r in rows for k in need):
+        print("  [qc5] IT/AGC 字段不全（rawmethod/rawdump 未产出），跳过 QC5")
+        return None
     mit = [float(r["med_it_ms2"]) for r in rows]
     sat = [float(r["it_sat_pct"]) for r in rows]
     fill1 = [float(r["med_fill_ms1"]) for r in rows]
@@ -438,4 +449,9 @@ def build_qcfigs(root, out_dir):
     qc3_scans(root, out_dir)
     qc4_method(root, out_dir)
     qc5_it_agc(root, out_dir)
-    write_conclusions(root, out_dir)
+    try:
+        write_conclusions(root, out_dir)
+    except (KeyError, TypeError, ValueError) as exc:
+        # 方法/IT/AGC 字段缺失（raw 未给这些统计）时结论表无法生成；
+        # 图形已经落盘，这里只提示，不把整条命令判失败。
+        print("  [qc] 结论表跳过：%s" % exc)

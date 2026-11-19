@@ -443,9 +443,67 @@ def l6_import(gff, faa, cds_gff, out_dir, min_aa=30, max_cds_overlap=0.8,
 
 
 # ---------------------------------------------------------------- 主构建
+def build_species_euk(code, out_dir, log=print):
+    """真核项目组装：复用 eukbuild 的剪接层，不重建六框 / 基因组延伸。
+
+    真核基因是断裂的：基因组六框与"注释 CDS 上游同框延伸"都不成立，这两层由
+    eukbuild 产出的 ``L0_junction.faa``（剪接连接肽）与 ``L2_txorf.faa``
+    （转录本三框）取代。这里只组装搜索库，**不改写**已建好的
+    ``L0_annot.faa`` / ``L0_junction.faa`` / ``L2_txorf.faa``。
+    """
+    l0_raw = read_faa(os.path.join(out_dir, "L0_annot.faa"))
+    if not l0_raw:
+        raise RuntimeError("真核层缺失：先跑 orfscape eukbuild（L0_annot.faa 为空）")
+    l0 = [(h.split()[0], il_norm(s)) for h, s in l0_raw]
+    ljr = [(h.split()[0], il_norm(s))
+           for h, s in read_faa(os.path.join(out_dir, "L0_junction.faa"))]
+    l2 = [(h.split()[0], il_norm(s))
+          for h, s in read_faa(os.path.join(out_dir, "L2_txorf.faa"))]
+
+    l0_peps = set()
+    for _, s in l0:
+        for rule in ("KR_C", "KR_N"):
+            for p in digest(s, rule):
+                l0_peps.add(p)
+    l4 = [(f"{k}_autolysis{i}", il_norm(p)) for k, ps in ENZYME_AUTOLYSIS.items()
+          for i, p in enumerate(ps, 1)]
+    l5 = [(k, il_norm(s)) for k, s in CONTAMINANTS.items()]
+
+    write_faa(os.path.join(out_dir, "L4_autolysis.faa"), l4)
+    write_faa(os.path.join(out_dir, "L5_contaminant.faa"), l5)
+
+    def merged(name, layers):
+        recs2 = [r for layer in layers for r in layer]
+        write_faa(os.path.join(out_dir, name), recs2)
+        dec = [("REV_" + h.replace(" ", "_")[:80], s[::-1]) for h, s in recs2]
+        write_faa(os.path.join(out_dir, name.replace(".faa", "_decoy.faa")), dec)
+        return len(recs2)
+
+    base = [l0, l4, l5, ljr]
+    n_annot = merged("db_annot.faa", [l0, l4, l5])
+    n_aug = merged("db_aug.faa", base)
+    pools = split_by_length(l2, k=3)
+    n_pools = [merged("db_6f%d.faa" % (i + 1), base + [p])
+               for i, p in enumerate(pools)]
+    n_6f = merged("db_6f.faa", base + [l2])
+    n_tx = merged("db_tx.faa", base)
+    notes = ("真核组装：L0 剪接蛋白 %d + 连接肽 %d + 转录本 ORF %d；"
+             "不建基因组六框 / L3；三池按长度等分" % (len(l0), len(ljr), len(l2)))
+    log("  " + notes)
+    return dict(code=code, L0=len(l0), L1=0, L2=len(l2), L3=0,
+                L4=len(l4), L5=len(l5), L6=0, LJR=len(ljr),
+                L2_pool1=len(pools[0]), L2_pool2=len(pools[1]),
+                L2_pool3=len(pools[2]),
+                db_annot=n_annot, db_aug=n_aug, db_6f=n_6f, db_tx=n_tx,
+                db_6f1=n_pools[0], db_6f2=n_pools[1], db_6f3=n_pools[2],
+                l0_peptides=len(l0_peps), notes=notes)
+
+
 def build_species(code, genome_dir, out_dir, min_orf_aa=10, log=print):
     """对一个物种构建 L0–L5 + 拆分库。返回统计 dict。"""
     os.makedirs(out_dir, exist_ok=True)
+    if os.path.isfile(os.path.join(out_dir, "euk_manifest.json")):
+        return build_species_euk(code, out_dir, log=log)
     faa = os.path.join(genome_dir, "protein.faa")
     fna = os.path.join(genome_dir, "genomic.fna")
     gff = os.path.join(genome_dir, "genomic.gff")

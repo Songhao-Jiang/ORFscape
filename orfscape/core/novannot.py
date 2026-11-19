@@ -75,9 +75,50 @@ def T(zh, en):
 
 
 # ---------------------------------------------------------------- 目标蛋白
+def _euk_keep_orfs(root, vdir):
+    """真核：从 P8 事件表取 KEEP 肽所属的新 ORF（L2| 转录本 ORF）。"""
+    sps = []
+    db = os.path.join(root, "02_db")
+    for name in sorted(os.listdir(db)) if os.path.isdir(db) else []:
+        if os.path.isfile(os.path.join(db, name, "euk_manifest.json")):
+            sps.append(name)
+    ev = os.path.join(root, "07_novgene", "euk_events.tsv")
+    names = set()
+    if os.path.exists(ev):
+        for r in load_tsv(ev):
+            name = str(r.get("orf") or "").strip()
+            if name.startswith("L2|") or name.startswith("LJR|"):
+                names.add(name)
+    seqs, sp_of = {}, {}
+    if not names:
+        return seqs, sp_of
+    # 序列可能来自一期 L2、二期增量池，按头名精确取
+    globs = ["L2_txorf.faa", "db_6f1.faa", "db_6f2.faa", "db_6f3.faa",
+             "db_6f.faa", "db_aug.faa",
+             "db_6g1.faa", "db_6g2.faa", "db_6g3.faa",
+             "db_8a1.faa", "db_8a2.faa", "db_8a3.faa"]
+    for sp in sps:
+        for fn in globs:
+            faa = os.path.join(db, sp, fn)
+            if not os.path.exists(faa):
+                continue
+            for h, s in read_faa(faa):
+                name = h.split()[0]
+                if name in names and name not in seqs:
+                    seqs[name] = s
+                    sp_of[name] = sp
+    return seqs, sp_of
+
+
 def novel_orfs(root):
     """新编码蛋白（基因间区类、可信新肽所属 ORF）→ ({orf: seq}, {orf: species})。"""
     vdir = os.environ.get("ORFSCAPE_VALIDATE_DIR", "06_validate")
+    # 真核：事件表已给出每个 KEEP 肽的 ORF，直接取该 ORF 的序列
+    _db = os.path.join(root, "02_db")
+    if os.path.isdir(_db) and any(
+            os.path.isfile(os.path.join(_db, d, "euk_manifest.json"))
+            for d in os.listdir(_db)):
+        return _euk_keep_orfs(root, vdir)
     src = os.path.join(root, vdir, "novel_validated.tsv")
     rows = load_tsv(src) if os.path.exists(src) else []
     rows = [r for r in rows
@@ -639,6 +680,8 @@ def plot_features(out_dir, ann, zh):
     tm = Counter(r["tm"] for r in ann)
     ks = sorted(tm)
     ax.bar([str(k) for k in ks], [tm[k] for k in ks], 0.6, color=COLORS[0])
+    for i, k in enumerate(ks):                 # 柱顶标数（图表规范）
+        ax.text(i, tm[k], str(tm[k]), ha="center", va="bottom", fontsize=5)
     ax.set_xlabel(T("跨膜段数", "TM segments"), fontsize=5.6)
     ax.set_ylabel(T("蛋白数", "Proteins"), fontsize=5.6)
     ax.set_title(T("a  跨膜螺旋", "a  TM helices"), fontsize=7,
@@ -647,6 +690,8 @@ def plot_features(out_dir, ann, zh):
     ss = Counter(r["ss_cls"] for r in ann)
     ks = list(ss)
     ax.bar(range(len(ks)), [ss[k] for k in ks], 0.6, color=COLORS[1])
+    for i, k in enumerate(ks):
+        ax.text(i, ss[k], str(ss[k]), ha="center", va="bottom", fontsize=5)
     ax.set_xticks(range(len(ks)))
     ax.set_xticklabels(ks, fontsize=5, rotation=20, ha="right")
     ax.set_ylabel(T("蛋白数", "Proteins"), fontsize=5.6)
@@ -658,6 +703,8 @@ def plot_features(out_dir, ann, zh):
         items = mf.most_common(8)
         ax.barh([k for k, _ in items][::-1], [v for _, v in items][::-1],
                 0.6, color=COLORS[2])
+        for i, (_k, v) in enumerate(items[::-1]):
+            ax.text(v, i, str(v), va="center", ha="left", fontsize=4.8)
         ax.set_xlabel(T("蛋白数", "Proteins"), fontsize=5.6)
         ax.tick_params(labelsize=4.8)
     ax.set_title(T("c  基序扫描（提示性）", "c  Motif hits"), fontsize=7,

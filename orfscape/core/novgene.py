@@ -243,18 +243,29 @@ def peptide_positions(root, targets):
                     poss = [x.strip() for x in (r.get("Positions") or "")
                             .replace(";", "/").split("/") if x.strip()]
                     hit = None
+                    l1_hit = None
                     for prot, pos in zip(prots, poss):
                         # L2 六框 / L6 转录 ORF 的位点可直接换算基因组坐标；
                         # L3 的位点是相对"延伸后蛋白"的，单独走 parse_l3_name 分支。
-                        if not (prot.startswith("L2_") or prot.startswith("L6|")
-                                or prot.startswith("L3")):
+                        # 主选仍是 L2/L3/L6（发现层里最贴合的命名）；L1 只作**兜底**：
+                        # 直接并列收 L1 会改变多蛋白命中的代表 ORF，把一部分 N 端延伸
+                        # 改判成基因间区（NTM 实测摆动 109 肽）。只在整行都没有
+                        # L2/L3/L6 可用位点时，才回落到 L1（修 unmapped，不动其余）。
+                        if not (prot.startswith("L1_") or prot.startswith("L2_")
+                                or prot.startswith("L6|") or prot.startswith("L3")):
                             continue
                         try:
                             p1 = int(pos.split(",")[0])
                         except (ValueError, IndexError):
                             continue
+                        if prot.startswith("L1_"):
+                            if l1_hit is None:
+                                l1_hit = (prot, p1)
+                            continue
                         hit = (prot, p1)
                         break            # Proteins 按打分排序，取第一个（最优）
+                    if hit is None:
+                        hit = l1_hit
                     if hit:
                         lst = out.setdefault((sp, pep), [])
                         if hit not in lst:
@@ -484,11 +495,15 @@ def ng1_events_bar(root, out_dir, counts, samples):
                label=TYPE_LABEL[TYPE_CORRECTED][0 if zh else 1])
         top = max([a + b for a, b in zip(inter, corr)]) or 1
         for xi, a, b in zip(x, inter, corr):
-            ax.text(xi, a + b + top * 0.02, f"{a + b:,}", ha="center",
-                    fontsize=5)
+            # 分段数字放各自段中心（叠放柱子上方的总数容易与段内数字混淆）
+            if a:
+                ax.text(xi, a / 2, f"{a:,}", ha="center", va="center",
+                        fontsize=4.8, color="#111827")
             if b:
-                ax.text(xi, a + b / 2, f"{b}", ha="center", va="center",
-                        fontsize=4.6, color="white")
+                ax.text(xi, a + b / 2, f"{b:,}", ha="center", va="center",
+                        fontsize=4.8, color="white")
+            ax.text(xi, a + b + top * 0.025, "Σ{y:,}".format(y=a + b),
+                    ha="center", fontsize=4.6, color="#6B7280")
         ax.set_xticks(x)
         ax.set_xticklabels([c[0] + chr(10) + c[1] for c in cols], fontsize=5.4)
         ax.set_ylabel(ttl, fontsize=5.6)

@@ -10,6 +10,7 @@
 返回：``{"status": ok|warn|fail|skip, "fails": n, "warns": n, "lines": [...]}``
 """
 import argparse
+import csv
 import glob
 import json
 import os
@@ -39,6 +40,15 @@ def _n_lines(path):
 def _rows(path):
     """表格数据行数（扣表头）。"""
     return max(0, _n_lines(path) - 1)
+
+
+def _tsv(path):
+    """读制表符表为 dict 列表（坏文件返回空表）。"""
+    try:
+        with open(path, encoding="utf-8-sig", newline="", errors="replace") as fh:
+            return list(csv.DictReader(fh, delimiter="\t"))
+    except OSError:
+        return []
 
 
 def _faa_count(path):
@@ -176,6 +186,20 @@ def check_stage(workdir, stage):
             rp.fail("no species database under 02_db/ (needs db_aug.faa or L0_annot.faa)")
         for d in core:
             code = os.path.basename(d)
+            # 真核项目：没有 L2_6frame/L1/L3（基因断裂，六框与基因组延伸不成立），
+            # 改为检查剪接蛋白层 + 连接肽/转录本层与三个搜索库。
+            if os.path.isfile(os.path.join(d, "euk_manifest.json")):
+                for name, min_b in (("L0_annot.faa", 100), ("db_annot.faa", 100),
+                                    ("db_aug.faa", 100), ("db_6f.faa", 100)):
+                    _require(rp, os.path.join(d, name), "%s/%s" % (code, name), min_b)
+                for name in ("L0_junction.faa", "L2_txorf.faa"):
+                    p = os.path.join(d, name)
+                    if not os.path.isfile(p):
+                        rp.warn("%s/%s missing (euk layer not built)" % (code, name))
+                    elif _size(p) < 60:
+                        rp.fail("%s/%s is empty — euk layer built without sequence"
+                                % (code, name))
+                continue
             for name, min_b in (("L0_annot.faa", 100), ("L2_6frame.faa", 100),
                                 ("db_annot.faa", 100), ("db_aug.faa", 100),
                                 ("db_6f.faa", 100)):
@@ -200,9 +224,27 @@ def check_stage(workdir, stage):
         if stage == "QC":
             files = _glob(root, "04a_qc/*")
             if not files:
-                rp.warn("04a_qc/ is empty (qcfigs/e1figs not run)")
+                rp.warn("04a_qc/ is empty (qcfigs/e1figs/predbench not run)")
             else:
                 rp.ok("%d QC output(s)" % len(files))
+            # 预测器基线（注释肽四选一）：有就报 chosen，没有就提示补跑
+            psum = os.path.join(root, "04a_qc", "predictor_summary.tsv")
+            if os.path.isfile(psum):
+                chosen, n_ok = "", 0
+                for r in _tsv(psum):
+                    try:
+                        n_ok += 1 if int(float(r.get("n") or 0)) > 0 else 0
+                    except ValueError:
+                        pass
+                    if str(r.get("chosen") or "").strip() == "1":
+                        chosen = str(r.get("predictor") or "")
+                if chosen:
+                    rp.ok("predictor baseline: %s chosen (%d predictor(s) with data)"
+                          % (chosen, n_ok))
+                else:
+                    rp.warn("04a_qc/predictor_summary.tsv has no chosen predictor")
+            else:
+                rp.warn("04a_qc/predictor_summary.tsv missing (run `orfscape predbench`)")
         else:
             specs = _glob(root, sub + "/*/*/pFind-Filtered.spectra")
             if not specs:

@@ -51,7 +51,8 @@ PRIMARY_PREDICTOR = "alphapeptdeep"
 csv.field_size_limit(2 ** 31 - 1)
 
 # 允许的子目录名白名单（防止外部输入构造路径）
-_SAFE_DIR = ("05_novel", "05b_research", "06_validate", "06b_validate_research")
+_SAFE_DIR = ("05_novel", "05b_research", "06_validate", "06b_validate_research",
+             "06c_validate_full")
 _SAFE_FILE = ("novel_peptides.tsv", "novel_after_research.tsv", "novel_validated.tsv")
 
 
@@ -71,18 +72,28 @@ def read_table_top(root, sub, filename):
 
 
 def load_reuse_verdicts(root, sub="06_validate", log=print):
-    """复用已有收口结论 → {peptide: {k: v}}（键为 verdict 字段名）。"""
+    """复用已有收口结论 → {peptide: {k: v}}（键为 verdict 字段名）。
+
+    **只复用真正判过的肽（KEEP/DROP）**：MISSING 表示"没拿到结论"，
+    若把它当成一条（字段全空的）判定，`mirror` 分支会把它悄悄提升成 KEEP
+    ——等于把未判定当已通过。MISSING 的肽会重新进 `only` 再验一遍。
+    """
     keys = ("n_spec", "n_credible", "iso_pass", "best_score", "best_n_frag",
             "best_missing_run", "best_cos", "cos_src", "doubt", "status",
             "quality_pass", "sim_pass", "gate_pass")
-    out = {}
+    out, undecided = {}, 0
     for r in read_table_top(root, sub, "novel_validated.tsv"):
         pep = r.get("peptide", "")
         if not pep:
             continue
+        fk = str(r.get("final_keep", ""))
+        if fk.startswith("MISSING"):
+            undecided += 1
+            continue
         out[pep] = {k: r.get("v_" + k, "") for k in keys}
     if out:
-        log(f"  复用 {sub} 的已验结论 {len(out)} 肽")
+        log(f"  复用 {sub} 的已验结论 {len(out)} 肽"
+            + (f"（{undecided} 条 MISSING 未判定，本轮重验）" if undecided else ""))
     return out
 
 
@@ -151,7 +162,12 @@ def collect_novel_psms(root, source="novel", only=None, log=print):
             enz = "LL" if "_LL_" in task else "TL"
             for r in load_spectra(f):
                 prots = (r.get("Proteins") or "")
-                if not ("L2_" in prots or "L3_" in prots):
+                # 发现层白名单：L1_ / L2_ / L3|（竖线！曾漏成 L3_）/ L6|
+                # 真核层是 L2|<tid>|f<frame>|… 与 LJR|<tid>|nt=…，同样必须在这儿：
+                # 漏一个就整层静默不进 P7（NTM 有 151 条 L3| 新肽因此被标成
+                # no_spectrum_shared；真核首次跑 MS 时 L2|/LJR| 同样会全丢）。
+                if not any(k in prots for k in ("L1_", "L2_", "L3_", "L3|", "L6|",
+                                                "L2|", "LJR|")):
                     continue
                 pep = iln(r.get("Sequence", ""))
                 if pep not in nov[sp]:
@@ -217,16 +233,22 @@ def read_mgf_blocks(path):
 
 
 def layer_of(protein):
-    """蛋白名 → (层, 证据来源)。L6 的名字带竖线，不能按 `_` 切。"""
+    """蛋白名 → (层, 证据来源)。L6/LJR/L2| 的名字带竖线，不能按 `_` 切。"""
     p = str(protein or "")
     if p.startswith("L2_"):
         return "L2", "intergenic_6frame"
+    if p.startswith("L2|"):
+        return "L2", "transcript_orf"
+    if p.startswith("LJR|"):
+        return "LJR", "splice_junction"
     if p.startswith("L3_") or p.startswith("L3|"):
         return "L3", "alt_start_extension"
     if p.startswith("L6|"):
         return "L6", "transcript_evidence"
     if p.startswith("L1_"):
         return "L1", "ab_initio"
+    if p.startswith("L0|"):
+        return "L0", "annotated"
     return p.split("_")[0], "alt_start_extension"
 
 
@@ -346,6 +368,7 @@ pdeep2_exe\t{pdeep2}
 pdeep2_instrument\tQE
 pdf_on\t0
 pfind_workers\t4
+pfind_orphan_scope\tglobal
 python_exe\t{pypath}
 candidate_scope\tfiltered
 proteogenomics_mode\t1
@@ -599,7 +622,18 @@ def build_validate(root, out_name="06_validate", iso_root=DEFAULT_ISOPSV,
     return verd, per_spec, title_maps, cards
 
 
-def write_report(root, verd, cards, out_name="06_validate", source="novel", log=print):
+def isopsv_tag(iso_root=None):
+    """isoPSV 版本标签：从安装路径里的 vX.Y.Z 取，取不到就写 unknown。
+
+    汇总表头原来硬编码 v2.0.175，实际跑 184 时会写错版本。
+    """
+    p = str(iso_root or DEFAULT_ISOPSV)
+    m = re.search(r"v?(\d+\.\d+\.\d+)", p)
+    return "v" + m.group(1) if m else "v?"
+
+
+def write_report(root, verd, cards, out_name="06_validate", source="novel", log=print,
+                 iso_root=None):
     """novel_peptides.tsv 合并验证列 + 分 Tier 通过率汇总。
 
     cards=(min_score, min_cos)（auto 标定后的实值）。汇总同时给出固定参考
@@ -645,7 +679,8 @@ def write_report(root, verd, cards, out_name="06_validate", source="novel", log=
                 r2["final_keep"], r2["keep_reason"] = "MISSING", ""
                 # 区分两种 MISSING：谱没送进去（被同 scan 的其它肽占用）／
                 # 谱送进去了但 isoPSV 没给结论
-                r2["v_miss_reason"] = ("" if r.get("peptide") in submitted
+                r2["v_miss_reason"] = ("isopsv_no_verdict"
+                                       if r.get("peptide") in submitted
                                        else "no_spectrum_shared")
             elif mirror and iso:
                 r2["final_keep"], r2["keep_reason"] = "KEEP", "isoPSV+mirror"
@@ -675,7 +710,7 @@ def write_report(root, verd, cards, out_name="06_validate", source="novel", log=
         w.writerows(rows_out)
     # 分 Tier 汇总
     tag = "P6b 合并集" if source == "research" else "R8 原始集"
-    lines = [f"# novel 收口汇总（{tag} · isoPSV v2.0.175 无标记三步流程）",
+    lines = [f"# novel 收口汇总（{tag} · isoPSV {isopsv_tag(iso_root)} 无标记三步流程）",
              f"卡值（Tier1 锚定标定）：cand1 score ≥ {min_score} ∧ "
              f"{PRIMARY_PREDICTOR} cosine ≥ {min_cos} ∧ credible_novel=TRUE（Tier3 门）",
              "保留规则：所有肽都过 isoPSV；**isoPSV 未过但镜像证据成立者保留**"

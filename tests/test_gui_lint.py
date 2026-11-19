@@ -25,6 +25,9 @@ TARGETS = [
     PKG / "orchestrator.py",
     PKG / "core" / "eukbuild.py",
     PKG / "core" / "eukpresets.py",
+    PKG / "core" / "eukevents.py",
+    PKG / "core" / "predbench.py",
+    PKG / "core" / "pack.py",
     PKG / "core" / "netguard.py",
 ]
 

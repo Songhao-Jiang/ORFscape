@@ -20,6 +20,10 @@ SPECIES_ALIAS = {
     "chelonae": "Mycobacterium chelonae",
     "龟分枝杆菌": "Mycobacterium chelonae",
     # —— 后续物种在此扩展 ——
+    "h99": "Cryptococcus neoformans",
+    "cneo": "Cryptococcus neoformans",
+    "c. neoformans": "Cryptococcus neoformans",
+    "新生隐球菌": "Cryptococcus neoformans",
     "eco": "Escherichia coli",
     "e. coli": "Escherichia coli",
     "ecoli": "Escherichia coli",
@@ -69,6 +73,23 @@ RAW_PATTERNS = [
         "map_species": {"MAB": "Mab", "Mab": "Mab", "MCH": "Mch", "Mch": "Mch"},
         "map_enz": {"T": "TL", "L": "LL"},
         "sample_type": "TCL",
+    },
+    {
+        "name": "h99_tcl",
+        # 隐球菌 H99 全细胞裂解：..._withtrap_37499_TL_01_45.raw
+        # 文件名不含物种 → 物种固定 H99；01–09 为馏分；末尾 CV 允许带 v（_-65v）
+        "rx": re.compile(r"_\d{5}_(?P<enz>TL|LL)_(?P<rep>\d{2})_(-?\d{1,3}v?)\.raw$",
+                         re.IGNORECASE),
+        "species": "H99",
+        "sample_type": "TCL",
+    },
+    {
+        "name": "h99_cf",
+        # 隐球菌 H99 培养滤液：..._withtrap_SD_CF_LL_FS_45.raw
+        "rx": re.compile(r"_CF_(?P<enz>TL|LL)_[A-Za-z]{0,4}(?P<rep>\d{0,2})_(-?\d{1,3}v?)\.raw$",
+                         re.IGNORECASE),
+        "species": "H99",
+        "sample_type": "CF",
     },
     {
         "name": "tp_mirror",

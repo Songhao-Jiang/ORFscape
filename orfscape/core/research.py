@@ -8,7 +8,8 @@
   4) 新增肽与新谱图回走同一套四滤（口径不放宽）
   5) 与原始 novel 合并 → 重算 Tier（回搜增量参与分级）
 
-断点续跑：任务目录已有 pFind-Filtered.spectra 即跳过。
+断点续跑：任务目录已有 pFind-Filtered.spectra **且 db.sha256 与当前回搜库一致**才跳过；
+库变了（换层/并入新候选）旧命中自动作废重搜，避免静默沿用别的库的结果。
 子进程安全：参数列表内联 + shell=False（走 pfsearch.run_searcher）。
 """
 import csv
@@ -16,17 +17,27 @@ import os
 import re
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
 from . import pfsearch
 from .novel import (digest_krc, digest_krn, iln, isobaric_variants,
                     load_spectra, read_faa)
 
 POOL_FILES = ("L2_6frame.faa", "L1_prodigal_filt.faa", "L1_gms2_filt.faa",
-              "L1_augustus_filt.faa", "L6_tx_orfs_filt.faa", "L3_altstart.faa")
+              "L1_augustus_filt.faa", "L6_tx_orfs_filt.faa", "L3_altstart.faa",
+              # 真核：转录本 ORF 在 eukbuild 的 L2_txorf.faa，dbbuild 再按长度拆进
+              # db_6f1/2/3；不列进来 P6b 会报"候选 ORF 0"（H99 首次跑即踩）
+              "L2_txorf.faa", "db_6f1.faa", "db_6f2.faa", "db_6f3.faa",
+              "db_6f.faa", "db_aug.faa",
+              # 二期增量层（VM 组装转录本相对注释的增量 ORF）
+              "db_6g1.faa", "db_6g2.faa", "db_6g3.faa",
+              # 三套增量：AUGUSTUS 从头预测的新位点 ORF
+              "db_8a1.faa", "db_8a2.faa", "db_8a3.faa")
 # L6 转录 ORF 的名字是 `L6|<contig>|<strand>|<start>-<end>|<n>`（带竖线），
 # L3 N 端延伸是 `L3|ext|<protein_id>|up<NN>aa`——都不是下划线前缀。
+# 真核另有 `L2|<tid>|f<frame>|nt=…`（转录本 ORF）与 `LJR|<tid>|nt=…`（连接肽）。
 # 漏了任一条，对应层在 P6b 回搜里会被整层忽略（TP 实测 L3 因此零贡献）。
-LAYER_PREFIX = ("L2_", "L1_", "L3_", "L3|", "L6_", "L6|")
+LAYER_PREFIX = ("L2_", "L1_", "L3_", "L3|", "L6_", "L6|", "L2|", "LJR|")
 
 
 # ------------------------------------------------------------------ 小工具
@@ -51,6 +62,14 @@ def _split_proteins(raw):
 
 def _orf_locus(protein):
     """L2_<contig>_<frame>_<start> → contig:200bp 分箱；其它层按蛋白 ID。"""
+    if protein.startswith("L2|"):
+        # 真核转录本 ORF：与 novel.py 的 txorf:<tid> 口径一致（按转录本归并）
+        f = protein.split("|")
+        return "txorf:%s" % (f[1] if len(f) > 1 else protein)
+    if protein.startswith("LJR|"):
+        f = protein.split("|")
+        return "junc:%s:%s" % (f[1] if len(f) > 1 else protein,
+                               f[2] if len(f) > 2 else "")
     if protein.startswith("L2_"):
         parts = protein.split("_")
         try:
@@ -81,8 +100,15 @@ def _fw(p):
 
 # ------------------------------------------------------------------ 任务枚举
 def task_index(annot_root, sp):
-    """从已有 E1 任务目录反推任务表（保证与 E1/E2 同一批 MGF 与酶）。"""
+    """从已有 E1 任务目录反推任务表（保证与 E1/E2 同一批 MGF 与酶）。
+
+    E1 的 cfg 里存的是**绝对路径**；项目被改名/搬盘后（例如 ProkPG → ORFscape），
+    旧路径会失效，回搜会 0 PSM。这里发现路径不存在时，回退到当前项目的
+    `03_mgf/<同名文件>`——只换目录、不改文件名，任务与 E1 仍一一对应。
+    """
     base = os.path.join(annot_root, sp)
+    # annot_root = <proj>/04_search_annot，上一层就是项目根
+    root = os.path.dirname(os.path.abspath(annot_root))
     out = []
     if not os.path.isdir(base):
         return out
@@ -98,6 +124,10 @@ def task_index(annot_root, sp):
         if not m:
             continue
         mgf = m.group(1).strip()
+        if not os.path.isfile(mgf):
+            alt = os.path.join(root, "03_mgf", os.path.basename(mgf))
+            if os.path.isfile(alt):
+                mgf = alt
         enz = "LL" if re.search(r"^enzyme=.*LysargiNase", txt, re.M) else "TL"
         out.append(dict(short=short, mgf=mgf, enzyme=enz))
     return out
@@ -112,8 +142,15 @@ def candidate_orfs(novel_rows):
     return cand
 
 
-def build_db(root, sp, cand, out_dir, log=print):
-    """db_annot + 候选 ORF → 回搜库；返回统计。"""
+def build_db(root, sp, cand, out_dir, mode="both", log=print):
+    """db_annot + 候选 ORF → 回搜库；返回统计。
+
+    mode="both"：注释蛋白进库竞争（默认，最严格）。
+    mode="novel"：只放候选 ORF。候选 ORF 与注释蛋白共享大量肽段时，
+    pFind 的 Group.exe（蛋白分组）会指数爆炸并以 std::bad_alloc 退出
+    （H99 实测：7,837 注释 + 3,116 候选必崩；只用候选则正常）。
+    注释肽本来就会被四滤剔除，故 novel 模式下信息不丢，只是少了库内竞争。
+    """
     db_dir = os.path.join(root, "02_db", sp)
     annot = read_faa(os.path.join(db_dir, "db_annot.faa"))
     have = set(h.split()[0] for h, _ in annot)
@@ -137,8 +174,9 @@ def build_db(root, sp, cand, out_dir, log=print):
                   - set(h.split()[0] for h, _ in annot))
     os.makedirs(out_dir, exist_ok=True)
     out_faa = os.path.join(out_dir, "db_research_%s.faa" % sp)
+    pool = (picked if mode == "novel" else annot + picked)
     with open(out_faa, "w", encoding="utf-8", newline="\n") as fh:
-        for h, s in annot + picked:
+        for h, s in pool:
             fh.write(">" + h + "\n")
             for i in range(0, len(s), 60):
                 fh.write(s[i:i + 60] + "\n")
@@ -148,12 +186,14 @@ def build_db(root, sp, cand, out_dir, log=print):
         n6f = sum(1 for ln in open(p6, encoding="utf-8", errors="replace")
                   if ln.startswith(">"))
     st = dict(species=sp, annot_n=len(annot), cand_n=len(cand),
-              picked_n=len(picked), research_n=len(annot) + len(picked),
+              picked_n=len(picked), research_n=len(pool), mode=mode,
               db6f_n=n6f, miss_n=len(miss),
-              shrink=(n6f / float(len(annot) + len(picked))) if n6f else 0.0,
+              shrink=(n6f / float(len(pool))) if n6f and pool else 0.0,
               by_pool=by_pool)
-    log("  [%s] 回搜库：注释 %d + 候选 %d = %d（db_6f %d，缩小 %.1f×）"
-        % (sp, st["annot_n"], st["picked_n"], st["research_n"], n6f, st["shrink"]))
+    log("  [%s] 回搜库（%s）：%s %d（db_6f %d，缩小 %s×）"
+        % (sp, mode,
+           ("候选" if mode == "novel" else "注释 %d + 候选 %d =" % (len(annot), len(picked))),
+           st["research_n"], n6f, "%.1f" % st["shrink"] if st["shrink"] else "-"))
     if miss:
         log("  [%s] 警告：%d 个候选 ORF 未在任何库文件中找到（前 3：%s）"
             % (sp, len(miss), "、".join(miss[:3])))
@@ -161,12 +201,47 @@ def build_db(root, sp, cand, out_dir, log=print):
 
 
 # ------------------------------------------------------------------ 搜库
-def _run_one(fasta, tdir_root, t, thread, pfind_bin):
+def _db_fp(fasta):
+    """回搜库指纹：换库后旧结果必须作废，否则会静默复用别的库的命中。"""
+    import hashlib
+    h = hashlib.sha256()
+    with open(fasta, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _safe_under(path, root):
+    """把 path 规范化并确认落在 root 之内；越界返回 None。"""
+    p = os.path.normpath(path)
+    base = os.path.normpath(root) + os.sep
+    return p if p.startswith(base) else None
+
+
+def _run_one(fasta, tdir_root, t, thread, pfind_bin, fp=""):
     tdir = os.path.join(tdir_root, t["short"])
     os.makedirs(tdir, exist_ok=True)
     spec = os.path.join(tdir, "pFind-Filtered.spectra")
+    mark = os.path.join(tdir, "db.sha256")
+    if os.path.exists(spec) and fp:
+        old = ""
+        if os.path.exists(mark):
+            old = open(mark, encoding="utf-8", errors="replace").read().strip()
+        # 老目录没指纹：结果比库新就默认同库产物（补指纹复用），比库旧一律重搜
+        legacy_ok = (not os.path.exists(mark)
+                     and os.path.getmtime(spec) >= os.path.getmtime(fasta))
+        if old == fp or legacy_ok:
+            if legacy_ok and _safe_under(mark, tdir_root):
+                Path(mark).write_text(fp + "\n", encoding="utf-8")
+            return dict(t, status="reuse", psm=pfsearch.count_result_rows(spec))
     if os.path.exists(spec):
-        return dict(t, status="reuse", psm=pfsearch.count_result_rows(spec))
+        # 旧结果没有指纹或指纹不符：挪走留证再重搜（不删，便于回溯）
+        try:
+            safe = _safe_under(spec + ".stale", tdir_root)
+            if safe:
+                os.replace(spec, safe)
+        except OSError:
+            pass
     cfg_text = pfsearch.build_cfg_lines(_fw(fasta), _fw(t["mgf"]), _fw(tdir),
                                         t["short"], t["enzyme"], thread=thread)
     cfg = os.path.join(tdir, t["short"] + ".cfg")
@@ -174,14 +249,18 @@ def _run_one(fasta, tdir_root, t, thread, pfind_bin):
         fh.write(cfg_text)
     rc = pfsearch.run_searcher(cfg, pfind_bin)
     n = pfsearch.count_result_rows(spec)
+    if fp and n > 0 and _safe_under(mark, tdir_root):
+        Path(mark).write_text(fp + "\n", encoding="utf-8")
     return dict(t, status="OK" if rc == 0 and n > 0 else "FAIL(rc=%s)" % rc, psm=n)
 
 
 def run_tasks(fasta, out_root, sp, tasks, pfind_bin, thread=5, workers=4, log=print):
     tr = os.path.join(out_root, sp)
+    fp = _db_fp(fasta)
     report, done = [], 0
     with ThreadPoolExecutor(max_workers=max(1, int(workers))) as ex:
-        futs = [ex.submit(_run_one, fasta, tr, t, thread, pfind_bin) for t in tasks]
+        futs = [ex.submit(_run_one, fasta, tr, t, thread, pfind_bin, fp)
+                for t in tasks]
         for f in as_completed(futs):
             r = f.result()
             report.append(r)
@@ -376,7 +455,7 @@ def write_summary(out_dir, stats, log=print):
 
 # ------------------------------------------------------------------ 主入口
 def run(workdir, species=("Mab", "Mch"), thread=5, workers=4,
-        collect_only=False, log=print):
+        collect_only=False, db_mode="both", log=print):
     root = os.path.abspath(workdir)
     annot_root = os.path.join(root, "04_search_annot")
     out_root = os.path.join(root, "05b_research")
@@ -398,7 +477,7 @@ def run(workdir, species=("Mab", "Mch"), thread=5, workers=4,
         cand = candidate_orfs(novel_rows)
         log("  [%s] 原始 novel 肽 %d，涉及候选 ORF %d"
             % (sp, len(novel_rows), len(cand)))
-        fasta, dbstat = build_db(root, sp, cand, out_root, log=log)
+        fasta, dbstat = build_db(root, sp, cand, out_root, mode=db_mode, log=log)
         tasks = task_index(annot_root, sp)
         log("  [%s] 回搜任务 %d（thread=%d, workers=%d）"
             % (sp, len(tasks), thread, workers))
@@ -409,6 +488,14 @@ def run(workdir, species=("Mab", "Mch"), thread=5, workers=4,
         else:
             report = run_tasks(fasta, out_root, sp, tasks, pfind_bin,
                                thread=thread, workers=workers, log=log)
+            n_fail = sum(1 for r in report if str(r["status"]).startswith("FAIL"))
+            if tasks and n_fail * 2 >= len(tasks):
+                msg = ("[%s] 回搜 %d/%d 任务失败：多半是 pFind Group.exe 蛋白分组"
+                       "内存爆炸（候选 ORF 与注释蛋白共享肽段过多）。"
+                       "改用 --db-mode novel 只放候选 ORF 重跑。"
+                       % (sp, n_fail, len(tasks)))
+                log("  " + msg)
+                raise RuntimeError(msg)
         found = collect(root, sp, out_root, log=log)
         rows = merge_and_tier(novel_rows, found)
         stats.append(write_species(out_root, sp, rows, report, dbstat, log=log))

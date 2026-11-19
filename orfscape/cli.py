@@ -16,6 +16,7 @@ import argparse
 import csv
 import datetime
 import os
+import re
 import sys
 
 from . import __version__
@@ -300,7 +301,9 @@ def cmd_genome(args):
                 continue
             out_dir = os.path.join(root, "01_genome", code)
             _log(f"[{code}] {sp} → 获取参考装配…")
-            meta = gmod.fetch_genome(sp, out_dir, today=_now()[:10])
+            meta = gmod.fetch_genome(sp, out_dir, today=_now()[:10],
+                                     accession=(getattr(args, "accession", "") or None),
+                                     group=(getattr(args, "group", "") or None))
             metas[code] = meta
             _log(f"  ✓ {meta['accession']}（{meta['refseq_category']}）"
                  f" 蛋白 {meta.get('n_proteins')} 条")
@@ -375,9 +378,9 @@ def cmd_split(args):
                     continue
                 stem_raw = fname[:-4]
                 cv_tag = str(r.get("pre_split_cv", "")).strip()
-                if stem_raw.endswith("_" + cv_tag):
-                    base = stem_raw[:-(len(cv_tag) + 1)]
-                else:
+                # 末尾 _45 / _-65 / _45v / _-65v 一律剥掉，避免 MGF 名里出现两组 CV
+                base = re.sub(r"_(-?\d{1,3})v?$", "", stem_raw)
+                if base == stem_raw:
                     base = stem_raw
                 out_mgf = os.path.join(mgf_dir, f"{base}_{cv_tag}.mgf")
                 if os.path.exists(out_mgf) and cvsplit._count_ions(out_mgf) > 0:
@@ -439,6 +442,33 @@ def cmd_split(args):
     _log(f"拆分完成：{n_ok}/{len(report)} 对账通过"
          + (f"；⚠ {n_bad} 失配（见 split_report.tsv）" if n_bad else ""))
     return 0 if n_bad == 0 else 2
+
+
+def cmd_sframe(args):
+    """建库前判定：按基因组紧凑度决定是否值得做六框翻译库。"""
+    from .core import sframe
+    _log(f"ORFscape v{__version__} . 六框适用性判定")
+    root = ensure_project(args.workdir)
+    sps = [s for s in str(args.sp).split(",") if s.strip()]
+    if not sps:
+        sps = list(inputs.project_species(root))
+    if not sps:
+        _log("  项目里没有物种（先跑 genome / split）")
+        return 2
+    plans = {}
+    for sp in sps:
+        m = sframe.run(root, sp, min_aa=args.min_aa,
+                       measure=not args.no_measure, log=_log)
+        plans[sp] = m
+        out = args.json or os.path.join(root, "02_db", sp, "sixframe_plan.json")
+        sframe.write_plan(m, out)
+        _log(f"  写出 {out}")
+    state = load_state(root)
+    state.setdefault("stages", {})["sframe"] = {
+        "done": True, "ts": _now(),
+        "verdicts": {sp: p["level"] for sp, p in plans.items()}}
+    save_state(root, state)
+    return 0
 
 
 def cmd_dbbuild(args):
@@ -517,11 +547,15 @@ def cmd_e1(args):
         raw_name += ".raw"
         sp, st, enz, frac = info.get(raw_name, ("", "", "", ""))
         if not sp:
-            # 预拆分数据（raw 名自带 CV，如 ..._T1_45.raw）回退：整段 stem 当 raw 名
-            alt = base + ".raw"
-            sp, st, enz, frac = info.get(alt, ("", "", "", ""))
-            if sp:
-                raw_name = alt
+            # 预拆分数据（raw 名自带 CV，如 ..._T1_45.raw）回退：整段 stem 当 raw 名。
+            # 再回退一次补 v：`..._TL_01_45v.raw` 的 MGF 名被剥成 `..._TL_01_45.mgf`，
+            # 反推回来是 `..._TL_01_45.raw`，与 groups.csv 里的原名差一个 v。
+            for alt in (base + ".raw",
+                        re.sub(r"_(-?\d{1,3})\.raw$", r"_\1v.raw", base + ".raw")):
+                sp, st, enz, frac = info.get(alt, ("", "", "", ""))
+                if sp:
+                    raw_name = alt
+                    break
         if not sp:
             continue
         short = f"{sp}_{st}_{enz}_{frac}_{cv}"
@@ -598,11 +632,15 @@ def cmd_e2(args):
         raw_name += ".raw"
         sp, st, enz, frac = info.get(raw_name, ("", "", "", ""))
         if not sp:
-            # 预拆分数据（raw 名自带 CV，如 ..._T1_45.raw）回退：整段 stem 当 raw 名
-            alt = base + ".raw"
-            sp, st, enz, frac = info.get(alt, ("", "", "", ""))
-            if sp:
-                raw_name = alt
+            # 预拆分数据（raw 名自带 CV，如 ..._T1_45.raw）回退：整段 stem 当 raw 名。
+            # 再回退一次补 v：`..._TL_01_45v.raw` 的 MGF 名被剥成 `..._TL_01_45.mgf`，
+            # 反推回来是 `..._TL_01_45.raw`，与 groups.csv 里的原名差一个 v。
+            for alt in (base + ".raw",
+                        re.sub(r"_(-?\d{1,3})\.raw$", r"_\1v.raw", base + ".raw")):
+                sp, st, enz, frac = info.get(alt, ("", "", "", ""))
+                if sp:
+                    raw_name = alt
+                    break
         if not sp:
             continue
         short = f"{sp}_{st}_{enz}_{frac}_{cv}"
@@ -610,15 +648,17 @@ def cmd_e2(args):
             tasks.append((f, sp, enz, cv, short, d))
     _log(f"任务数: {len(tasks)}（raw x CV x 库）")
     report = []
-    for i, (f, sp, enz, cv, short, dbk) in enumerate(tasks, 1):
+
+    def _one(task):
+        """跑一个 (MGF, 库) 任务，返回一行 report；已有结果直接复用。"""
+        f, sp, enz, cv, short, dbk = task
         tname = short + "__" + dbk
         tdir = os.path.join(os.path.join(out_root, sp), tname)
         os.makedirs(tdir, exist_ok=True)
         spectra = os.path.join(tdir, "pFind-Filtered.spectra")
         if os.path.exists(spectra):
             n = pfsearch.count_result_rows(spectra)
-            report.append((tname, sp, enz, cv, dbk, "OK", n, "reuse"))
-            continue
+            return (tname, sp, enz, cv, dbk, "OK", n, "reuse")
         fasta = os.path.join(os.path.join(os.path.join(root, "02_db", sp), "db_" + dbk + ".faa"), "")
         fasta = fasta[:-1]
         cfg_text = pfsearch.build_cfg_lines(
@@ -630,10 +670,34 @@ def cmd_e2(args):
         rc = pfsearch.run_searcher(cfg_path, pfind_bin)
         n = pfsearch.count_result_rows(spectra)
         status = "OK" if rc == 0 and n > 0 else f"FAIL(rc={rc})"
-        report.append((tname, sp, enz, cv, dbk, status, n, ""))
-        progress.tick(i, len(tasks), "task", name=tname, status=status, psm=n)
-        if i % 8 == 0 or i == len(tasks):
-            _log(f"  [{i}/{len(tasks)}] {tname} {status} PSM={n}")
+        return (tname, sp, enz, cv, dbk, status, n, "")
+
+    workers = max(1, int(getattr(args, "workers", 1) or 1))
+    if workers == 1:
+        for i, task in enumerate(tasks, 1):
+            row = _one(task)
+            report.append(row)
+            progress.tick(i, len(tasks), "task", name=row[0], status=row[5], psm=row[6])
+            if i % 8 == 0 or i == len(tasks):
+                _log(f"  [{i}/{len(tasks)}] {row[0]} {row[5]} PSM={row[6]}")
+    else:
+        # 128 个任务串行要 10 h；按任务级并发（与 P6b 的 research 同一套做法），
+        # 总线程数约 workers × thread，由调用方控制不超订。
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        _log(f"  并行：{workers} 个任务并发 × {args.thread} 线程")
+        rows = [None] * len(tasks)
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_one, t): i for i, t in enumerate(tasks)}
+            done = 0
+            for fut in as_completed(futs):
+                i = futs[fut]
+                rows[i] = fut.result()
+                done += 1
+                progress.tick(done, len(tasks), "task", name=rows[i][0],
+                              status=rows[i][5], psm=rows[i][6])
+                if done % 8 == 0 or done == len(tasks):
+                    _log(f"  [{done}/{len(tasks)}] {rows[i][0]} {rows[i][5]} PSM={rows[i][6]}")
+        report = [r for r in rows if r is not None]
     out = os.path.join(out_root, "e2_report.tsv")
     import csv as _csv3
     with open(out, "w", newline="", encoding="utf-8-sig") as fh:
@@ -693,13 +757,23 @@ def cmd_validate(args):
     reuse, only, ms, mc = None, None, args.min_score, args.min_cos
     if getattr(args, "reuse", None):
         reuse = V.load_reuse_verdicts(root, args.reuse)
-        merged = set()
+        # Tier 变了的肽不能用旧结论：卡值按 Tier 标定，T3→T2 必须按新阈值重判
+        old_tier = {}
+        p_old = os.path.join(root, args.reuse, "novel_validated.tsv")
+        if os.path.isfile(p_old):
+            with open(p_old, encoding="utf-8-sig", newline="") as fh:
+                for r in csv.DictReader(fh, delimiter="\t"):
+                    old_tier[r["peptide"]] = r.get("tier_final") or r.get("tier_new") or ""
+        merged, new_tier = set(), {}
         for sp in inputs.project_species(root):
             for r in V.read_table_in(root, "05b_research", sp,
                                      "novel_after_research.tsv"):
                 merged.add(r["peptide"])
-        only = merged - set(reuse)
-        _log(f"  增量模式：合并集 {len(merged)} 肽 − 已验 {len(reuse)} = 本轮需验 {len(only)}")
+                new_tier[r["peptide"]] = r.get("tier_new", "")
+        moved = {p for p in merged if p in old_tier and old_tier[p] != new_tier.get(p)}
+        only = (merged - set(reuse)) | moved
+        _log(f"  增量模式：合并集 {len(merged)} 肽 − 已验 {len(reuse)} = "
+             f"{len(merged - set(reuse))}，另加 Tier 变动 {len(moved)} → 本轮需验 {len(only)}")
         if getattr(args, "cards", None):
             parts = str(args.cards).replace("，", ",").split(",")
             if len(parts) == 2:
@@ -710,7 +784,7 @@ def cmd_validate(args):
         min_cos=mc, subsets=subsets, source=source,
         only_peptides=only, reuse=reuse)
     out_tsv, sumf = V.write_report(root, verd, cards, out_name=out_name,
-                                   source=source)
+                                   source=source, iso_root=args.isopsv)
     state = load_state(root)
     state.setdefault("stages", {})["validate"] = {
         "done": True, "ts": _now(), "n_peptides": len(verd),
@@ -762,13 +836,26 @@ def cmd_novel(args):
 
 
 def list_species_novel(root):
-    """从 05_novel/05b_research 子目录推断物种（不写死物种代码）。"""
+    """推断物种目录：优先取 `02_db/<sp>/db_annot.faa`（真正的物种库）。
+
+    05_novel/05b_research 里除了物种目录，还可能有 `.mimosa`、`Mab_CFP_LL_F01_45`
+    这类工作目录；按目录名猜会把它们当物种，拿不存在的 `db_annot.faa` 去读而崩。
+    没有库目录时才退回按 05_novel/05b 的子目录猜。
+    """
+    db = os.path.join(root, "02_db")
+    if os.path.isdir(db):
+        out = [x for x in sorted(os.listdir(db))
+               if not x.startswith((".", "_"))
+               and os.path.isfile(os.path.join(db, x, "db_annot.faa"))]
+        if out:
+            return out
     out = []
     for d in ("05_novel", "05b_research"):
         p = os.path.join(root, d)
         if os.path.isdir(p):
             out += [x for x in sorted(os.listdir(p))
-                    if os.path.isdir(os.path.join(p, x))]
+                    if not x.startswith((".", "_"))
+                    and os.path.isdir(os.path.join(p, x))]
     seen, uniq = set(), []
     for x in out:
         if x not in seen:
@@ -785,7 +872,15 @@ def cmd_novgene(args):
     _log(f"ORFscape v{__version__} . P8 新基因事件分类")
     root = ensure_project(args.workdir)
     out_dir = os.path.join(root, args.out or "07_novgene")
-    counts, subs, _ = G.build_novgene(root, out_dir, log=_log)
+    from .core import eukevents as EE
+    mode = getattr(args, "events", "auto")
+    if mode == "auto":
+        mode = "euk" if EE.is_euk_project(root) else "prok"
+    if mode == "euk":
+        _log("  事件口径：真核七类（肽级归一）")
+        EE.build_novgene_euk(root, out_dir, log=_log)
+    else:
+        G.build_novgene(root, out_dir, log=_log)
     _log(f"P8 完成：产物 {out_dir}")
     return 0
 
@@ -808,7 +903,7 @@ def cmd_novreport(args):
     from .core import novreport as R
     _log(f"ORFscape v{__version__} . P8 新基因汇总报告")
     root = ensure_project(args.workdir)
-    out_dir = os.path.join(root, args.out or "07_novgene")
+    out_dir = os.path.join(root, args.out or "08_report")
     R.build_novelreport(root, out_dir, log=_log)
     _log(f"P8 报告完成：产物 {out_dir}")
     return 0
@@ -826,7 +921,7 @@ def cmd_research(args):
             _log("  项目内没有物种（先跑 P6），P6b 无法确定回搜范围")
             return 2
     stats = R.run(root, species=species, thread=args.thread, workers=args.workers,
-                  collect_only=args.collect_only, log=_log)
+                  collect_only=args.collect_only, db_mode=args.db_mode, log=_log)
     if not stats:
         _log("P6b 未产出（检查 05_novel/*/novel_peptides.tsv）")
         return 2
@@ -937,6 +1032,52 @@ def cmd_eukbuild(args):
     return 0
 
 
+def cmd_euktx(args):
+    """真核转录层准备：① 导入现成组装 GTF；② RNA-seq → hisat2 → stringtie 组装。"""
+    from .core import eukrna
+    _log(f"ORFscape v{__version__} . 真核转录层准备开始")
+    root = ensure_project(args.workdir)
+    sp = args.sp or (inputs.project_species(root) or [""])[0]
+    if not sp:
+        _log("缺 --sp（且 00_input/species.tsv 为空）")
+        return 2
+    gdir = os.path.join(root, "01_genome", sp)
+    fna = args.fna or os.path.join(gdir, "genomic.fna")
+    gff = args.gff or os.path.join(gdir, "genomic.gff")
+    for label, p in (("fna", fna), ("gff", gff)):
+        if not os.path.isfile(p):
+            _log(f"{label} 不存在：{p}")
+            return 2
+    if not (args.gtf or args.fastq):
+        _log("缺 --gtf（导入组装）或 --fastq（跑比对）")
+        return 2
+    try:
+        if args.gtf:
+            if not os.path.isfile(args.gtf):
+                _log(f"--gtf 不存在：{args.gtf}")
+                return 2
+            man = eukrna.import_assembly(root, sp, gff, args.gtf, log=_log)
+            n_tx, extra = man["n_transcripts"], man["n_external"]
+        else:
+            if not os.path.isdir(args.fastq):
+                _log(f"fastq 目录不存在：{args.fastq}")
+                return 2
+            man = eukrna.build(root, sp, fna, gff, args.fastq, threads=args.threads,
+                               samples=args.samples, keep_bam=not args.drop_bam, log=_log)
+            n_tx, extra = man["n_transcripts"], man.get("class_counts", {})
+    except RuntimeError as exc:
+        _log(f"✗ {exc}")
+        return 2
+    st = load_state(root)
+    st.setdefault("stages", {})["euktx"] = {
+        "done": True, "ts": _now(), "species": sp,
+        "n_transcripts": n_tx, "source": ("gtf" if args.gtf else "fastq"),
+        "extra": extra}
+    save_state(root, st)
+    _log(f"转录层完成：{n_tx} 条转录本 → 02_tx/{sp}/transcripts.fa")
+    return 0
+
+
 def cmd_braker(args):
     """BRAKER3：生成运行脚本（Linux 执行）+ 把 GTF 解析成蛋白 FASTA 供下游用。"""
     from .core import braker as B
@@ -981,6 +1122,22 @@ def cmd_qcfigs(args):
     return 0
 
 
+def cmd_predbench(args):
+    """预测器基线：注释肽谱图跑 APD / pDeep2 / pDeep3 / ms2pip，按余弦中位选最优。"""
+    from .core import predbench
+    _log(f"ORFscape v{__version__} . 预测器基线（注释肽）")
+    root = ensure_project(args.workdir)
+    out_dir = os.path.join(root, args.out or "04a_qc")
+    res = predbench.run(root, out_dir, n=args.n, log=_log)
+    if res.get("chosen"):
+        _log(f"  最优预测器：{res['chosen']}（注释肽余弦中位最高）")
+    else:
+        _log("  没有预测器产出结果（检查 ORFSCAPE_* 工具路径）")
+        return 1
+    _log(f"预测器基线完成 → {out_dir}")
+    return 0
+
+
 def cmd_e1figs(args):
     """E1 QC 系列单图：已注释搜库结果蛋白质组质控 7 维度独立出图。"""
     from .core import e1figs
@@ -1009,6 +1166,17 @@ def cmd_novelfigs(args):
                             log=_log)
     novreport.build_novelreport(root, out_dir, log=_log)
     _log(f"NOV 图/表/结论 完成 → {out_dir}")
+    return 0
+
+
+def cmd_pack(args):
+    """结果打包：把一次流程的用户侧产物复制到 result_YYYYMMDD/（只读源文件）。"""
+    from .core import pack as P
+    _log(f"ORFscape v{__version__} . 结果打包")
+    root = ensure_project(args.workdir)
+    target = P.pack(root, out=args.out, date=args.date,
+                    lang=getattr(args, "lang", "en"), log=_log)
+    _log(f"结果包 → {target}")
     return 0
 
 
@@ -1065,6 +1233,10 @@ def main(argv=None):
     dc.set_defaults(func=cmd_doctor)
     gc = sub.add_parser("genome", help="基因组获取：按项目物种表下载 RefSeq 三件套并钉扎")
     gc.add_argument("--workdir", required=True, help="项目目录")
+    gc.add_argument("--accession", default="",
+                    help="钉死装配号（如 GCF_000149245.1）；留空按参考级自动挑")
+    gc.add_argument("--group", default="",
+                    help="限定 RefSeq 类群目录（bacteria/fungi/…）；留空自动逐个尝试")
     gc.set_defaults(func=cmd_genome)
     sp = sub.add_parser("split", help="D0 电压拆分：多 CV raw → 分 CV MGF（含对账）")
     sp.add_argument("--workdir", required=True, help="项目目录")
@@ -1072,6 +1244,14 @@ def main(argv=None):
     dbp = sub.add_parser("dbbuild", help="C 建库：L0-L5 层级 + 两段漏斗拆分库")
     dbp.add_argument("--workdir", required=True, help="项目目录")
     dbp.set_defaults(func=cmd_dbbuild)
+    sfp = sub.add_parser("sframe", help="建库前判定：该物种要不要做基因组六框翻译")
+    sfp.add_argument("--workdir", required=True, help="项目目录")
+    sfp.add_argument("--sp", default="", help="物种代号（默认取项目内物种）")
+    sfp.add_argument("--min-aa", type=int, default=30, help="ORF 最短长度（默认 30 aa）")
+    sfp.add_argument("--no-measure", action="store_true",
+                     help="不真翻译，只按 2G 估算残基（大基因组快）")
+    sfp.add_argument("--json", default="", help="判定结果写到该路径（默认 02_db/<sp>/sixframe_plan.json）")
+    sfp.set_defaults(func=cmd_sframe)
     e1p = sub.add_parser("e1", help="E1 已注释库搜库（pFind x db_annot x 分CV MGF）")
     e1p.add_argument("--workdir", required=True, help="项目目录")
     e1p.add_argument("--thread", type=int, default=16, help="pFind 线程数")
@@ -1080,6 +1260,8 @@ def main(argv=None):
     e2p.add_argument("--workdir", required=True, help="项目目录")
     e2p.add_argument("--dbs", default="aug,6f", help="库后缀逗号表（aug,6f）")
     e2p.add_argument("--thread", type=int, default=12, help="pFind 线程数")
+    e2p.add_argument("--workers", type=int, default=1,
+                     help="并发任务数（>1 时多个 pFind 同时跑，总线程≈workers×thread）")
     e2p.set_defaults(func=cmd_e2)
     qcp = sub.add_parser("qc", help="QC（紧跟 E1）：酶切质控+门槛警告")
     qcp.add_argument("--workdir", required=True, help="项目目录")
@@ -1087,6 +1269,12 @@ def main(argv=None):
     qf = sub.add_parser("qcfigs", help="QC 系列单图：raw 参数质控 5 维度独立出图")
     qf.add_argument("--workdir", required=True, help="项目目录")
     qf.set_defaults(func=cmd_qcfigs)
+    pbp = sub.add_parser("predbench",
+                         help="预测器基线：注释肽谱图跑 APD/pDeep2/pDeep3/ms2pip 选最优")
+    pbp.add_argument("--workdir", required=True, help="项目目录")
+    pbp.add_argument("--out", default=None, help="输出子目录（默认 04a_qc）")
+    pbp.add_argument("--n", type=int, default=600, help="注释肽样本数（默认 600）")
+    pbp.set_defaults(func=cmd_predbench)
     ef = sub.add_parser("e1figs", help="E1 QC 系列单图：搜库结果蛋白质组质控 7 维度")
     ef.add_argument("--workdir", required=True, help="项目目录")
     ef.set_defaults(func=cmd_e1figs)
@@ -1097,6 +1285,15 @@ def main(argv=None):
     nf.add_argument("--from", dest="from_dir", default=None,
                     help="验收集目录（默认 06_validate；TP 用 06b_validate_research）")
     nf.set_defaults(func=cmd_novelfigs)
+    pkp = sub.add_parser("pack", help="把本次流程的用户侧结果打包到 result_YYYYMMDD/")
+    pkp.add_argument("--workdir", required=True, help="项目目录")
+    pkp.add_argument("--out", default=None,
+                     help="输出目录（默认 <项目>/result_<任务开始日>）")
+    pkp.add_argument("--date", default=None,
+                     help="任务开始日 YYYYMMDD（默认取 run_state.created，再退最早日志）")
+    pkp.add_argument("--lang", default="en", choices=["en", "zh"],
+                     help="结果包语言（默认 en；zh 用中文报告与 README）")
+    pkp.set_defaults(func=cmd_pack)
     vp = sub.add_parser("validate", help="R8 收口：novel 全量过 isoPSV+Tier 分流门控")
     vp.add_argument("--workdir", required=True, help="项目目录")
     vp.add_argument("--isopsv", default=V_ISOPSV_DEFAULT,
@@ -1122,6 +1319,10 @@ def main(argv=None):
     rp.add_argument("--workers", type=int, default=4, help="并发任务数")
     rp.add_argument("--collect-only", action="store_true",
                     help="只合并已有结果并重算 Tier，不跑搜库")
+    rp.add_argument("--db-mode", default="both", choices=("both", "novel"),
+                    help="回搜库内容：both=注释蛋白+候选 ORF（默认）；"
+                         "novel=只放候选 ORF（候选与注释共享肽段过多导致 "
+                         "pFind Group.exe 内存爆炸时用）")
     rp.set_defaults(func=cmd_research)
     nv = sub.add_parser("novel",
                         help="P6 新肽筛选（E2 层命中 → 四滤 → 坐标 → Tier）")
@@ -1138,6 +1339,9 @@ def main(argv=None):
         _p.add_argument("--out", default=None, help="输出子目录（默认见各命令）")
         _p.add_argument("--from", dest="from_dir", default=None,
                         help="验收集目录（默认 06_validate；TP 用 06b_validate_research）")
+        if _name == "novgene":
+            _p.add_argument("--events", default="auto", choices=["auto", "prok", "euk"],
+                            help="事件口径：auto=有 euk_manifest 的项目走真核七类")
         if _name == "novannot":
             _p.add_argument("--no-esm", action="store_true",
                             help="跳过 ESM-2 接触图（无 GPU/离线时）")
@@ -1170,6 +1374,22 @@ def main(argv=None):
     eb.add_argument("--ref-protein", default=None,
                     help="参考蛋白 FASTA（可选，做剪接正确性校验）")
     eb.set_defaults(func=cmd_eukbuild)
+    tx = sub.add_parser("euktx",
+                        help="真核转录组装：RNA-seq → hisat2/stringtie 转录本（供 eukbuild --transcripts）")
+    tx.add_argument("--workdir", required=True, help="项目目录")
+    tx.add_argument("--sp", default=None,
+                    help="物种代码（默认取 00_input/species.tsv 第一个）")
+    tx.add_argument("--fastq", default="",
+                    help="RNA-seq fastq 根目录（递归找 R1/R2 对）；与 --gtf 二选一")
+    tx.add_argument("--gtf", default="",
+                    help="导入现成组装 GTF（StringTie/gffcompare 产物，如测序公司 merged.gtf）")
+    tx.add_argument("--samples", default="",
+                    help="只跑这些样本（逗号分隔）；留空=全部")
+    tx.add_argument("--threads", type=int, default=8, help="hisat2 线程数（默认 8）")
+    tx.add_argument("--fna", default=None, help="基因组 FASTA（默认 01_genome/<sp>/genomic.fna）")
+    tx.add_argument("--gff", default=None, help="注释 GFF3（默认 01_genome/<sp>/genomic.gff）")
+    tx.add_argument("--drop-bam", action="store_true", help="组装完删 BAM（省盘）")
+    tx.set_defaults(func=cmd_euktx)
     lp = sub.add_parser("l6map",
                         help="L6 转录 ORF：Prodigal 区段内坐标 → 基因组坐标 + CDS 重叠过滤")
     lp.add_argument("--workdir", required=True, help="项目目录")

@@ -35,13 +35,15 @@ def revcomp(seq):
 
 
 _BASES = "TCAG"
-# NCBI 密码子表的碱基顺序是 T,C,A,G；三张用得到的表：
+# NCBI 密码子表的碱基顺序是 T,C,A,G；四张用得到的表：
 #   1 标准；2 脊椎动物线粒体（TGA=W, ATA=M, AGA/AGG=*）；
-#   3 酵母线粒体（TGA=W, ATA=M, CTN=T）
+#   3 酵母线粒体（TGA=W, ATA=M, CTN=T）；
+#   4 霉菌/原生动物线粒体（TGA=W, ATA=M，AGA/AGG 仍是 R —— 隐球菌线粒体用这张）
 _AMINO = {
     1: "FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG",
     2: "FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIMMTTTTNNKKSS**VVVVAAAADDEEGGGG",
     3: "FFLLSSSSYY**CCWWTTTTPPPPHHQQRRRRIIMMTTTTNNKKSSRRVVVVAAAADDEEGGGG",
+    4: "FFLLSSSSYY**CCWWLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG",
 }
 
 
@@ -105,6 +107,24 @@ def _attrs(text, fmt):
     return out
 
 
+def _norm_tid(tid):
+    """转录本 ID 归一：NCBI GFF 的 ``rna-XM_1`` 与外部组装的 ``XM_1`` 视为同一条。"""
+    t = str(tid or "").strip()
+    for pre in ("rna-", "transcript:"):
+        if t.startswith(pre):
+            return t[len(pre):]
+    return t
+
+
+def _norm_gene(gid):
+    """基因 ID 归一：剥掉 GFF3 的 ``gene-`` / ``gene:`` 前缀（只取第一个）。"""
+    g = str(gid or "").strip().split(",")[0]
+    for pre in ("gene-", "gene:"):
+        if g.startswith(pre):
+            return g[len(pre):]
+    return g
+
+
 def parse_annotation(path, log=print):
     """解析 GFF3/GTF。
 
@@ -133,10 +153,14 @@ def parse_annotation(path, log=print):
             seqid, _src, feat, start, end, _sc, strand, phase, attr = f[:9]
             a = _attrs(attr, fmt)
             if feat in ("mRNA", "transcript"):
-                tid = a.get("ID") or a.get("transcript_id")
+                # NCBI GFF 的 ID 是 "rna-XM_…"，而 transcript_id 属性是 "XM_…"；
+                # 外部组装（StringTie/公司交付）一律用 "XM_…"。这里统一取
+                # transcript_id 并剥掉 rna-/gene- 前缀，让两边 tid 能对上
+                # （否则外源转录本在事件分类时映射不到注释，整类静默丢失）。
+                tid = _norm_tid(a.get("transcript_id") or a.get("ID"))
                 if not tid:
                     continue
-                parent = a.get("Parent") or a.get("gene_id") or ""
+                parent = _norm_gene(a.get("Parent") or a.get("gene_id") or "")
                 txs[tid] = {"seqid": seqid,
                             "strand": strand if strand in "+-" else "+",
                             "gene": parent.split(",")[0],
@@ -144,7 +168,7 @@ def parse_annotation(path, log=print):
                             "cds": [], "exons": [], "table": 1}
                 stats["tx"] += 1
             elif feat in ("CDS", "exon"):
-                tid = a.get("Parent") or a.get("transcript_id")
+                tid = _norm_tid(a.get("Parent") or a.get("transcript_id"))
                 if not tid:
                     stats["no_parent"] += 1
                     continue

@@ -25,6 +25,9 @@ _SPECIES_DIR = {  # 学名 → RefSeq 物种目录名（改名物种用现行目
     "Mycobacterium abscessus": "Mycobacteroides_abscessus",
     "Mycobacterium chelonae": "Mycobacteroides_chelonae",
 }
+# RefSeq 类群目录尝试顺序：原核单物种目录 → 真核类群总表（按 organism_name 过滤）
+_REFSEQ_GROUPS = ("bacteria", "fungi", "viridiplantae", "protozoa",
+                  "invertebrate", "vertebrate_mammalian", "plant", "other")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -53,30 +56,81 @@ def _sha256(path):
     return h.hexdigest()
 
 
-def pick_assembly(species):
-    """解析物种 assembly_summary → (accession, refseq_category, organism, ftp_path)。"""
-    sp_dir = _SPECIES_DIR.get(species, species.replace(" ", "_"))
-    url = f"https://ftp.ncbi.nlm.nih.gov/genomes/refseq/bacteria/{sp_dir}/assembly_summary.txt"
-    with _guarded_urlopen(url) as resp:
-        txt = resp.read().decode("utf-8")
+def _read_summary(url):
+    """读一个 assembly_summary.txt → 行列表（表头去 '#'）。404 返回空表。"""
     import csv
     import io
+    try:
+        with _guarded_urlopen(url) as resp:
+            txt = resp.read().decode("utf-8")
+    except Exception:
+        return []
     lines = [l for l in txt.splitlines() if not l.startswith("##")]
+    if len(lines) < 2:
+        return []
     hdr = lines[0].lstrip("#")
-    rows = list(csv.DictReader(io.StringIO("\n".join([hdr] + lines[1:])), delimiter="\t"))
+    return list(csv.DictReader(io.StringIO("\n".join([hdr] + lines[1:])),
+                               delimiter="\t"))
+
+
+def _species_hit(organism, species):
+    """organism_name 是否属于该物种（学名前缀匹配，允许 "Cryptococcus neoformans H99"）。"""
+    o, s = (organism or "").strip().lower(), (species or "").strip().lower()
+    if not (o and s):
+        return False
+    return o == s or o.startswith(s + " ") or o.startswith(s + "_")
+
+
+def pick_assembly(species, accession=None, group=None):
+    """解析物种 assembly_summary → (accession, refseq_category, organism, ftp_path)。
+
+    两种 RefSeq 目录布局都要支持（原核按物种分目录，真核按类群放一张总表）：
+
+    - 原核：``refseq/bacteria/<属_种>/assembly_summary.txt``（单物种表）
+    - 真核：``refseq/fungi/assembly_summary.txt``（全类群表，按 organism_name 过滤）
+
+    ``accession`` 可钉死装配号（同一物种多个参考装配时用，如隐球菌 H99 与 JEC21）。
+    """
+    sp_dir = _SPECIES_DIR.get(species, species.replace(" ", "_"))
+    groups = [group] if group else list(_REFSEQ_GROUPS)
+    rows, tried = [], []
+    for g in groups:
+        for sub in (sp_dir, None):
+            url = (f"https://ftp.ncbi.nlm.nih.gov/genomes/refseq/{g}/{sub}/assembly_summary.txt"
+                   if sub else
+                   f"https://ftp.ncbi.nlm.nih.gov/genomes/refseq/{g}/assembly_summary.txt")
+            tried.append(url)
+            got = _read_summary(url)
+            if not got:
+                continue
+            if sub is None:                       # 全类群表：按物种过滤
+                got = [r for r in got if _species_hit(r.get("organism_name"), species)]
+            if got:
+                rows = got
+                break
+        if rows:
+            break
     if not rows:
-        raise RuntimeError(f"{sp_dir} 无 RefSeq 装配")
+        raise RuntimeError(f"{species} 在 RefSeq 未找到装配（试过 {len(tried)} 个目录）")
+    if accession:
+        hit = [r for r in rows if r.get("assembly_accession") == accession]
+        if not hit:
+            raise RuntimeError(f"{species} 的 RefSeq 表里没有 {accession}")
+        rows = hit
+
     def rank(r):
         cat = r.get("refseq_category", "na")
         cat_rank = {"reference genome": 0, "representative genome": 1}.get(cat, 2)
-        complete = 0 if r.get("assembly_level") == "Complete Genome" else 1
-        return (cat_rank, complete)
+        level = str(r.get("assembly_level", ""))
+        complete = {"Complete Genome": 0, "Chromosome": 1}.get(level, 2)
+        return (cat_rank, complete, r.get("assembly_accession", ""))
+
     best = min(rows, key=rank)
     return best["assembly_accession"], best.get("refseq_category", "na"), \
         best.get("organism_name", ""), best["ftp_path"]
 
 
-def fetch_genome(species, out_dir, today=""):
+def fetch_genome(species, out_dir, today="", accession=None, group=None):
     """下载三件套并钉扎。已有齐备 versions.json 时离线复用。返回 versions dict。"""
     os.makedirs(out_dir, exist_ok=True)
     ver_path = os.path.join(out_dir, "versions.json")
@@ -86,7 +140,7 @@ def fetch_genome(species, out_dir, today=""):
         if meta.get("species") == species and all(
                 os.path.exists(os.path.join(out_dir, f)) for f in need):
             return meta  # 离线复用
-    acc, cat, org, ftp = pick_assembly(species)
+    acc, cat, org, ftp = pick_assembly(species, accession=accession, group=group)
     base = ftp.rstrip("/")
     stem = base.rsplit("/", 1)[-1]
     meta = {"species": species, "accession": acc, "refseq_category": cat,

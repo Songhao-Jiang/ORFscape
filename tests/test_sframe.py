@@ -91,6 +91,19 @@ def main():
         finally:
             S.ABS_ORF_MAX = old
 
+        # 6) L1_SF 名字解析 + 基因组坐标映射（正负链）
+        from orfscape.core import eukevents as E
+        sf = E._l1sf("L1_SF|chr1|+f1|nt=100|len=50")
+        check(sf == ("chr1", "+", 100, 50), "L1_SF 名字解析", sf)
+        check(E._l1sf("L1_SF|chr1|x9|nt=1|len=2") is None, "非法名字返回 None")
+
+        plus = E.pep_blocks("L1_SF|chr1|+f1|nt=100|len=50", 2, 10, {})
+        check(plus == [("chr1", "+", 106, 135)], "正链肽段区间", plus)
+        minus = E.pep_blocks("L1_SF|chr1|-f2|nt=1000|len=50", 2, 10, {})
+        check(minus == [("chr1", "-", 965, 994)], "负链肽段区间", minus)
+        ob = E.orf_blocks("L1_SF|chr1|-f2|nt=1000|len=50", {})
+        check(ob == [("chr1", "-", 851, 1000)], "负链 ORF 跨度", ob)
+
     print("")
     if FAILS:
         print("%d failure(s): %s" % (len(FAILS), ", ".join(FAILS)))

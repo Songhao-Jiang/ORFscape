@@ -134,12 +134,14 @@ def build_species_novel(sp, db_dir, annot_root, disc_root, out_dir, log=print):
         for r in load_spectra(sp_path):
             prot = (r.get("Proteins") or "").split(";")[0].rstrip("/")
             # 层白名单：L1 ab initio / L2 六框 / L3 N 端延伸 / L6 转录证据
-            # 真核另有 LJR（剪接连接肽）与 L2|（转录本三框），漏掉就整层静默丢失。
+            # 真核另有 LJR（剪接连接肽）、L2|（转录本三框）、L1_SF|（基因间六框），
+            # 漏掉就整层静默丢失。
             # 注意 L3 的蛋白名是 `L3|ext|<protein_id>|up<NN>aa`（竖线），
             # 只认 `L3_` 会把整层静默丢掉（TP 实测漏 30+ 条人工清单里的肽）。
             if not (prot.startswith("L1_") or prot.startswith("L2_")
                     or prot.startswith("L3") or prot.startswith("L6|")
-                    or prot.startswith("LJR|") or prot.startswith("L2|")):
+                    or prot.startswith("LJR|") or prot.startswith("L2|")
+                    or prot.startswith("L1_SF|")):
                 continue
             cand.append((r.get("Sequence", ""), prot[:2],
                          prot, task, enz, r.get("Target/Decoy", "")))
@@ -181,6 +183,20 @@ def build_species_novel(sp, db_dir, annot_root, disc_root, out_dir, log=print):
             tid = f[1] if len(f) > 1 else v["protein"]
             locus_of[v["peptide"]] = f"txorf:{tid}"
             v["source"] = "transcript_orf"
+        elif v["protein"].startswith("L1_SF|"):
+            # L1_SF|<contig>|<strand>f<frame>|nt=<0基起点>|len=<n>
+            # 与 L2 同口径的 200 bp 分箱：同一区间的不同读框算同一处事件
+            f = v["protein"].split("|")
+            contig = f[1] if len(f) > 1 else ""
+            nt = 0
+            for tok in f[2:]:
+                if tok.startswith("nt="):
+                    try:
+                        nt = int(tok[3:])
+                    except ValueError:
+                        nt = 0
+            locus_of[v["peptide"]] = f"{contig}:{nt // 200 * 200}"
+            v["source"] = "genome_6frame"
         elif v["layer"] == "L1":
             # 与 L2 同口径的 200 bp 分箱（L1 与 L2 命中同一区间即同一事件）
             hit = l1_map.get(v["protein"])

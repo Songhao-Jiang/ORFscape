@@ -154,11 +154,35 @@ def tx_blocks(tx, nt_start, nt_len):
     return blocks
 
 
+_L1SF_RX = re.compile(r"^L1_SF\|([^|]+)\|([+-])f(\d)\|nt=(\d+)\|len=(\d+)$")
+
+
+def _l1sf(name):
+    """`L1_SF|<contig>|<strand>f<frame>|nt=<0基起点>|len=<aa>` → 四元组。
+
+    基因间区六框的 ORF 是基因组上连续一段，不需要转录本模型：
+    起点 nt 是该 ORF 第一个碱基在**正向基因组**上的 0 基坐标（负链为其 5′ 端）。
+    """
+    m = _L1SF_RX.match(str(name or ""))
+    if not m:
+        return None
+    return m.group(1), m.group(2), int(m.group(4)), int(m.group(5))
+
+
 def pep_blocks(name, pos1, pep_len, txs):
     """蛋白名 + pFind 位点 → 肽段的分段基因组区间（0-based 闭区间）。
 
     pos1 是 pFind 的 0-based 氨基酸起点（见口径：aa→nt 一律 pos*3）。
     """
+    sf = _l1sf(name)
+    if sf:                                  # L1_SF：连续 ORF，直接算
+        contig, strand, nt, _aa = sf
+        pos0 = int(pos1)
+        if strand == "+":
+            lo = nt + pos0 * 3
+            return [(contig, "+", lo, lo + pep_len * 3 - 1)]
+        hi = nt - pos0 * 3
+        return [(contig, "-", hi - pep_len * 3 + 1, hi)]
     parsed = parse_euk_name(name)
     if not parsed:
         return []
@@ -189,6 +213,12 @@ def pep_blocks(name, pos1, pep_len, txs):
 
 def orf_blocks(name, txs):
     """ORF 自身的基因组跨度（用于判"ORF 延伸但肽段没延伸"）。"""
+    sf = _l1sf(name)
+    if sf:
+        contig, strand, nt, aa = sf
+        if strand == "+":
+            return [(contig, "+", nt, nt + aa * 3 - 1)]
+        return [(contig, "-", nt - aa * 3 + 1, nt)]
     parsed = parse_euk_name(name)
     if not parsed:
         return []
@@ -397,7 +427,7 @@ def run(workdir, sp, rows, out_dir=None, log=print):
         pep = iln(r.get("peptide", ""))
         name = str(r.get("event_orf") or r.get("protein") or "").split("/")[0]
         pos0 = r.get("event_pos0")
-        if not pep or pos0 is None or not parse_euk_name(name):
+        if not pep or pos0 is None or not (parse_euk_name(name) or _l1sf(name)):
             continue
         cls, gene = classify_peptide(name, pos0, len(pep), txs, genes_by_contig)
         gap = _min_gap(pep_blocks(name, pos0, len(pep), txs), genes_by_contig)

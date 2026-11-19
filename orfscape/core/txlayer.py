@@ -11,19 +11,31 @@ import csv
 import gzip
 import io
 import os
+import re
 import subprocess
+import urllib.parse
 import urllib.request
 
 from .. import localpaths
 
 # ENA 域名白名单（Mimosa 约束）
 _ENA = "https://ftp.sra.ebi.ac.uk"
+_ACC_RX = re.compile(r"^[A-Za-z]{1,3}\d{4,}$")     # SRR/ERR/DRR + 数字
+
 
 def ena_fastq_urls(run_acc):
-    """查询 ENA → [(url_R1, url_R2)]。"""
+    """查询 ENA → [(url_R1, url_R2)]。
+
+    accession 会被拼进查询串，所以先按 SRR1234567 这种形状校验再 URL 编码；
+    不符合形状直接返回空，不构造请求。
+    """
     import json
-    url = (f"https://www.ebi.ac.uk/ena/portal/api/filereport?"
-           f"accession={run_acc}&result=read_run&fields=fastq_ftp&format=json")
+    acc = str(run_acc or "").strip()
+    if not _ACC_RX.match(acc):
+        return []
+    q = urllib.parse.urlencode({"accession": acc, "result": "read_run",
+                                "fields": "fastq_ftp", "format": "json"})
+    url = "https://www.ebi.ac.uk/ena/portal/api/filereport?" + q
     try:
         resp = urllib.request.urlopen(url, timeout=15)
         data = json.loads(resp.read())

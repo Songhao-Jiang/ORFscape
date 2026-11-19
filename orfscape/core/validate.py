@@ -245,6 +245,8 @@ def layer_of(protein):
         return "L3", "alt_start_extension"
     if p.startswith("L6|"):
         return "L6", "transcript_evidence"
+    if p.startswith("L1_SF|"):
+        return "L1S", "genome_6frame"
     if p.startswith("L1_"):
         return "L1", "ab_initio"
     if p.startswith("L0|"):
@@ -426,6 +428,58 @@ def run_isopsv(run_dir, iso_root, log=print):
     return ("OK" if p.returncode == 0 else f"EXIT{p.returncode}"), logf
 
 
+def reset_step1_cache(run_dir, log=print):
+    """删掉 isoPSV 第一步的抽谱缓存（`unlabeled/` + `step1_done.txt`）。
+
+    Stage A 的谱图来源是 `<cfg_dir>/unlabeled/*.mgf`，不是 config 里的 `mgf=`；
+    只要 `step1_done.txt` 在，主程序就跳过第一步，缓存永远停留在首次建库时那批谱。
+    换过肽集后不删它，新谱在 `ReadMGF_script.R` 里查不到标题 → 静默 next，
+    下游只会看到 `v_best_*` 全空（H99 实测 239 谱里只有 5 谱进了 Stage A）。
+    """
+    import shutil
+    d = os.path.join(str(run_dir), "unlabeled")
+    if not os.path.isdir(d):
+        return False
+    n = 0
+    for name in os.listdir(d):
+        if name.endswith(".mgf"):
+            n += 1
+    shutil.rmtree(d, ignore_errors=True)
+    log("  [%s] 清空 isoPSV 第一步缓存（%d 个 MGF + step1_done），强制重新抽谱"
+        % (os.path.basename(str(run_dir)), n))
+    return True
+
+
+def _skipped_peptides(run_dir, tmap):
+    """annotated_skipped（设计内跳过）对应的肽集合。
+
+    isoPSV 对"候选肽命中已注释库"的谱不做错误校正，留痕在
+    `1.unlabeled_result/pg_skipped.tsv`（仅 File_Name）。这类肽不是 MISSING，
+    报告里必须单列，否则会被误当成"没判定"。
+    """
+    out = set()
+    rd = latest_result_dir(run_dir)
+    if not rd:
+        return out
+    p = os.path.join(rd, "1.unlabeled_result", "pg_skipped.tsv")
+    if not os.path.isfile(p):
+        return out
+    with open(p, encoding="utf-8", errors="replace") as fh:
+        head = fh.readline().rstrip("\n").split("\t")
+        # 该文件可能带表头也可能不带（H99 实测：只有 File_Name 值，一行一个）
+        if "File_Name" in head:
+            idx = head.index("File_Name")
+            lines = [ln.rstrip("\n").split("\t") for ln in fh]
+        else:
+            idx = 0
+            lines = [head] + [ln.rstrip("\n").split("\t") for ln in fh]
+        for f in lines:
+            if len(f) > idx and f[idx] in tmap:
+                out.add(tmap[f[idx]].get("peptide", ""))
+    out.discard("")
+    return out
+
+
 def latest_result_dir(run_dir):
     cands = sorted(p for p in Path(run_dir).glob("result_*") if p.is_dir())
     return str(cands[-1]) if cands else None
@@ -575,6 +629,7 @@ def build_validate(root, out_name="06_validate", iso_root=DEFAULT_ISOPSV,
         rows = [r for r in rows if (r["species"], r["enzyme"]) in subsets]
         log(f"  子集模式：{subsets} → {len(rows)} 谱")
     per_spec, title_maps = {}, {}
+    skipped = set()
     for sp in sorted({r["species"] for r in rows}) or ["Mab", "Mch"]:
         for enz in ("TL", "LL"):
             sub = [r for r in rows if r["species"] == sp and r["enzyme"] == enz]
@@ -598,6 +653,10 @@ def build_validate(root, out_name="06_validate", iso_root=DEFAULT_ISOPSV,
                 mgf_dir = os.path.join(run_dir, "inputs")
                 log(f"  [{sp}_{enz}] 抽谱落盘 …")
                 psm, _tmap = stage_run(root, sub, run_dir, mgf_dir, log=log)
+                # isoPSV 的 Stage A 只读 <run_dir>/unlabeled/ 缓存，而该缓存带
+                # step1_done.txt 后就不再重建 —— 换过肽集却不删它，新谱会被静默跳过
+                # （H99 实测：239 谱进来，只有 5 谱进了 Stage A，其余无结论）。
+                reset_step1_cache(run_dir, log=log)
                 fasta = os.path.join(root, "02_db", sp, "db_annot.faa")
                 write_configs(run_dir, enz, psm, fasta, mgf_dir, iso_root)
                 log(f"  [{sp}_{enz}] isoPSV 运行（最長 2h，日志 {run_dir}\\isopsv_run.log）")
@@ -612,8 +671,23 @@ def build_validate(root, out_name="06_validate", iso_root=DEFAULT_ISOPSV,
                         for r in csv.DictReader(fh, delimiter="\t")}
             per_spec.update(ps)
             title_maps.update(tmap)
+            skipped |= _skipped_peptides(run_dir, tmap)
     # 肽级门控 + 汇总（卡值 auto=Tier1 锚定标定）
     verd, cards = peptide_verdicts(per_spec, title_maps, min_score, min_cos, log=log)
+    if skipped:
+        # annotated_skipped：isoPSV 按设计不做错误校正（候选命中已注释库），
+        # 不是"没判定"，单独标出来，免得混进 MISSING
+        empty = {k: "" for k in ("n_spec", "n_credible", "iso_pass", "best_score",
+                                 "best_n_frag", "best_missing_run", "best_cos",
+                                 "cos_src", "doubt", "status", "quality_pass",
+                                 "sim_pass", "gate_pass")}
+        added = 0
+        for pep in skipped:
+            if pep not in verd:
+                verd[pep] = dict(empty, skipped=True)
+                added += 1
+        log(f"  annotated_skipped（设计内不做错误校正）：{len(skipped)} 肽"
+            + (f"，其中 {added} 条本轮补记" if added else ""))
     if reuse:
         merged = dict(reuse)
         merged.update(verd)          # 本轮新验的覆盖复用值
@@ -677,11 +751,15 @@ def write_report(root, verd, cards, out_name="06_validate", source="novel", log=
                                or str(v["gate_pass"]).lower() == "true"))
             if v is None:
                 r2["final_keep"], r2["keep_reason"] = "MISSING", ""
-                # 区分两种 MISSING：谱没送进去（被同 scan 的其它肽占用）／
-                # 谱送进去了但 isoPSV 没给结论
+                # 区分三种 MISSING：谱没送进去（被同 scan 的其它肽占用）／
+                # 谱送进去了但 isoPSV 没给结论／命中已注释库被设计内跳过
                 r2["v_miss_reason"] = ("isopsv_no_verdict"
                                        if r.get("peptide") in submitted
                                        else "no_spectrum_shared")
+            elif v.get("skipped"):
+                # annotated_skipped：isoPSV 按设计不做错误校正，留痕在 pg_skipped.tsv
+                r2["final_keep"], r2["keep_reason"] = "MISSING", ""
+                r2["v_miss_reason"] = "annotated_skipped"
             elif mirror and iso:
                 r2["final_keep"], r2["keep_reason"] = "KEEP", "isoPSV+mirror"
             elif mirror:

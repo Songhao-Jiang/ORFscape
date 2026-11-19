@@ -287,3 +287,111 @@ def write_plan(d, path):
         json.dump(d, fh, ensure_ascii=False, indent=2, sort_keys=True)
         fh.write("\n")
     return path
+
+
+# ---------------------------------------------------------------- 建库
+def _iln(seq):
+    return str(seq).upper().replace("I", "L")
+
+
+def _existing_hashes(db_dir):
+    """现有各层序列的 I/L 归一哈希（增量去重用）。"""
+    import glob
+    import hashlib
+    have = set()
+    for p in sorted(glob.glob(os.path.join(db_dir, "*.faa"))):
+        name = os.path.basename(p)
+        if "_decoy" in name or name.startswith("db_9"):
+            continue
+        with open(p, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line.startswith(">"):
+                    s = line.strip()
+                    if s:
+                        have.add(hashlib.md5(_iln(s).encode()).hexdigest())
+    return have
+
+
+def build_intergenic_db(root, sp, min_aa=30, prefix="9i", log=print):
+    """基因间区六框库：只留不落在注释基因内的 ORF，并与现有层去重。
+
+    蛋白名 `L1_SF|<contig>|<strand>f<frame>|nt=<0基起点>|len=<aa>`：
+    起点是 ORF 第一个碱基在**正向基因组**上的 0 基坐标（负链取该 ORF 的 5′ 端），
+    这样下游不必再查转录本模型就能还原肽段区间。
+    """
+    import hashlib
+    from .dbbuild import write_faa, split_by_length
+
+    root = str(root)
+    gdir = os.path.join(root, "01_genome", sp)
+    db_dir = os.path.join(root, "02_db", sp)
+    fa = os.path.join(gdir, "genomic.fna")
+    spans = _load_gene_spans(os.path.join(gdir, "genomic.gff"))
+    have = _existing_hashes(db_dir)
+    log("  [%s] 现有层唯一序列 %s 条（用于增量去重）" % (sp, "{:,}".format(len(have))))
+
+    seqs, cur = {}, None
+    with open(fa, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                cur = line[1:].split()[0]
+                seqs[cur] = []
+            elif cur:
+                seqs[cur].append(line)
+
+    recs, seen = [], set()
+    n_gene = n_dup = n_short = n_x = 0
+    for name, parts in seqs.items():
+        s = "".join(parts)
+        L = len(s)
+        for strand, seq in (("+", s), ("-", s.translate(_COMP)[::-1])):
+            for frame in range(3):
+                prot = _translate(seq[frame:])
+                off = frame
+                for orf in prot.split("*"):
+                    ln = len(orf)
+                    start_off = off
+                    off += ln * 3 + 3
+                    if ln < min_aa:
+                        n_short += 1
+                        continue
+                    if "X" in orf:
+                        n_x += 1
+                        continue
+                    g0, g1 = ((start_off, start_off + ln * 3 - 1) if strand == "+"
+                              else (L - 1 - (start_off + ln * 3 - 1), L - 1 - start_off))
+                    if spans and _overlaps(spans, name, g0, g1):
+                        n_gene += 1
+                        continue
+                    key = hashlib.md5(_iln(orf).encode()).hexdigest()
+                    if key in have or key in seen:
+                        n_dup += 1
+                        continue
+                    seen.add(key)
+                    nt = start_off if strand == "+" else (L - 1 - start_off)
+                    recs.append(("L1_SF|%s|%sf%d|nt=%d|len=%d"
+                                 % (name, strand, frame, nt, ln), _iln(orf)))
+
+    log("  [%s] 六框过筛：基因内 %s / 与现有层重复 %s / 过短 %s / 含X %s"
+        % (sp, "{:,}".format(n_gene), "{:,}".format(n_dup),
+           "{:,}".format(n_short), "{:,}".format(n_x)))
+    log("  [%s] 基因间区六框 ORF：%s 条（残基 %s）"
+        % (sp, "{:,}".format(len(recs)),
+           "{:,}".format(sum(len(s) for _h, s in recs))))
+    if not recs:
+        log("  [%s] 没有可入库的基因间 ORF" % sp)
+        return []
+    pools = split_by_length(recs, k=3)
+    names = []
+    for i, pool in enumerate(pools, 1):
+        nm = "db_%s%d.faa" % (prefix, i)
+        write_faa(os.path.join(db_dir, nm), pool)
+        dec = [("REV_" + h.replace(" ", "_")[:80], s[::-1]) for h, s in pool]
+        write_faa(os.path.join(db_dir, nm.replace(".faa", "_decoy.faa")), dec)
+        names.append(nm)
+        log("  %s  %s 条" % (nm, "{:,}".format(len(pool))))
+    log("  E2 用 --dbs %s1,%s2,%s3" % (prefix, prefix, prefix))
+    return names

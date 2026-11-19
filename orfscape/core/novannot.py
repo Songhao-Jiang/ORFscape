@@ -96,7 +96,8 @@ def _euk_keep_orfs(root, vdir):
     globs = ["L2_txorf.faa", "db_6f1.faa", "db_6f2.faa", "db_6f3.faa",
              "db_6f.faa", "db_aug.faa",
              "db_6g1.faa", "db_6g2.faa", "db_6g3.faa",
-             "db_8a1.faa", "db_8a2.faa", "db_8a3.faa"]
+             "db_8a1.faa", "db_8a2.faa", "db_8a3.faa",
+             "db_9i1.faa", "db_9i2.faa", "db_9i3.faa"]
     for sp in sps:
         for fn in globs:
             faa = os.path.join(db, sp, fn)
@@ -705,6 +706,8 @@ def plot_features(out_dir, ann, zh):
                 0.6, color=COLORS[2])
         for i, (_k, v) in enumerate(items[::-1]):
             ax.text(v, i, str(v), va="center", ha="left", fontsize=4.8)
+        # 数值标签画在柱外，必须留出余量，否则会压在右边框上（视觉审核实测）
+        ax.set_xlim(0, max(v for _, v in items) * 1.18 + 1)
         ax.set_xlabel(T("蛋白数", "Proteins"), fontsize=5.6)
         ax.tick_params(labelsize=4.8)
     ax.set_title(T("c  基序扫描（提示性）", "c  Motif hits"), fontsize=7,

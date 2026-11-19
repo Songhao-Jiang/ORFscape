@@ -32,12 +32,15 @@ POOL_FILES = ("L2_6frame.faa", "L1_prodigal_filt.faa", "L1_gms2_filt.faa",
               # 二期增量层（VM 组装转录本相对注释的增量 ORF）
               "db_6g1.faa", "db_6g2.faa", "db_6g3.faa",
               # 三套增量：AUGUSTUS 从头预测的新位点 ORF
-              "db_8a1.faa", "db_8a2.faa", "db_8a3.faa")
+              "db_8a1.faa", "db_8a2.faa", "db_8a3.faa",
+              # 四套增量：基因间区六框（L1_SF|）
+              "db_9i1.faa", "db_9i2.faa", "db_9i3.faa")
 # L6 转录 ORF 的名字是 `L6|<contig>|<strand>|<start>-<end>|<n>`（带竖线），
 # L3 N 端延伸是 `L3|ext|<protein_id>|up<NN>aa`——都不是下划线前缀。
 # 真核另有 `L2|<tid>|f<frame>|nt=…`（转录本 ORF）与 `LJR|<tid>|nt=…`（连接肽）。
 # 漏了任一条，对应层在 P6b 回搜里会被整层忽略（TP 实测 L3 因此零贡献）。
-LAYER_PREFIX = ("L2_", "L1_", "L3_", "L3|", "L6_", "L6|", "L2|", "LJR|")
+LAYER_PREFIX = ("L2_", "L1_", "L3_", "L3|", "L6_", "L6|", "L2|", "LJR|",
+                "L1_SF|")
 
 
 # ------------------------------------------------------------------ 小工具

@@ -41,6 +41,27 @@ def _log(msg):
 
 
 # ---------------------------------------------------------------- 项目脚手架（字面量子目录）
+def project_path(root, *parts):
+    """项目内路径：拼接后规范化，并确认仍在 root 之下（越界直接报错）。
+
+    所有写盘都走这里，避免"用户传入的 --workdir/物种名"把文件写到项目之外。
+    """
+    base = os.path.abspath(str(root))
+    p = os.path.abspath(os.path.join(base, *[str(x) for x in parts]))
+    if os.path.commonpath([p, base]) != base:
+        raise ValueError(f"路径越界: {p} 不在 {base} 之下")
+    return p
+
+
+def open_in_project(root, path, mode="r", **kw):
+    """打开项目内文件（先校验归属，再交给内建 open）。"""
+    base = os.path.abspath(str(root))
+    p = os.path.abspath(str(path))
+    if os.path.commonpath([p, base]) != base:
+        raise ValueError(f"路径越界: {p} 不在 {base} 之下")
+    return open(p, mode, **kw)
+
+
 def ensure_project(workdir):
     """校验并创建项目目录与 12 个字面量子目录；返回项目根路径字符串。
 
@@ -77,7 +98,7 @@ def load_state(root):
 def save_state(root, state):
     import json
     state["updated"] = _now()
-    with open(os.path.join(root, "run_state.json"), "w", encoding="utf-8") as fh:
+    with open_in_project(root, os.path.join(root, "run_state.json"), "w", encoding="utf-8") as fh:
         json.dump(state, fh, ensure_ascii=False, indent=2)
 
 
@@ -134,7 +155,7 @@ def cmd_scan(args):
     root = ensure_project(args.workdir)
     inp = os.path.join(root, "00_input")
     inputs.save_groups_csv(rows, os.path.join(inp, "groups.csv"))
-    with open(os.path.join(inp, "species.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
+    with open_in_project(root, os.path.join(inp, "species.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.writer(fh, delimiter="\t")
         w.writerow(["species_code", "species", "taxid", "matched", "hit_term", "note"])
         for c, s in sp_res.items():
@@ -203,7 +224,7 @@ def cmd_scan(args):
               "rt_min_first", "rt_min_last", "cvs", "n_cv", "needs_cv_split",
               "resolutions", "cycle_times", "nce", "method_segments", "agc_pcts",
               "med_it_ms2", "it_sat_pct", "med_fill_ms1", "med_fill_ms2"]
-    with open(os.path.join(inp, "raw_info.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
+    with open_in_project(root, os.path.join(inp, "raw_info.tsv"), "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, delimiter="\t", extrasaction="ignore")
         w.writeheader()
         for r in rows:
@@ -228,7 +249,7 @@ def cmd_scan(args):
             })
             w.writerow(r2)
     if unmatched:
-        with open(os.path.join(inp, "raw_index.unmatched.txt"), "w", encoding="utf-8") as fh:
+        with open_in_project(root, os.path.join(inp, "raw_index.unmatched.txt"), "w", encoding="utf-8") as fh:
             fh.write("\n".join(str(p) for p in unmatched))
 
     # 7) 状态机与摘要
@@ -392,7 +413,7 @@ def cmd_split(args):
                                    cv_tag, st, n))
                 _log(f"  [{i}/{len(pre)}] {base}_{cv_tag} {st} 谱={n}")
             rep_path = os.path.join(mgf_dir, "split_report.tsv")
-            with open(rep_path, "w", newline="", encoding="utf-8-sig") as fh:
+            with open_in_project(root, rep_path, "w", newline="", encoding="utf-8-sig") as fh:
                 w = _csv2.writer(fh, delimiter="\t")
                 w.writerow(["mgf", "raw_file", "cv", "status", "n_spectra"])
                 w.writerows(pre_report)
@@ -428,7 +449,7 @@ def cmd_split(args):
             _log(f"  [{i}/{len(rows)}] …{raw_name[-38:]} 完成")
     out_tsv = os.path.join(mgf_dir, "split_report.tsv")
     import csv as _csv
-    with open(out_tsv, "w", newline="", encoding="utf-8-sig") as fh:
+    with open_in_project(root, out_tsv, "w", newline="", encoding="utf-8-sig") as fh:
         w = _csv.writer(fh, delimiter="\t")
         w.writerow(["raw_file", "cv", "status", "n_spectra", "note"])
         w.writerows(report)
@@ -456,6 +477,7 @@ def cmd_sframe(args):
         _log("  项目里没有物种（先跑 genome / split）")
         return 2
     plans = {}
+    built = {}
     for sp in sps:
         m = sframe.run(root, sp, min_aa=args.min_aa,
                        measure=not args.no_measure, log=_log)
@@ -463,10 +485,18 @@ def cmd_sframe(args):
         out = args.json or os.path.join(root, "02_db", sp, "sixframe_plan.json")
         sframe.write_plan(m, out)
         _log(f"  写出 {out}")
+        if args.build:
+            if m["level"] not in ("compact", "moderate"):
+                _log(f"  [{sp}] 判定为 {m['level']}，拒绝建六框库"
+                     f"（{m['verdict_zh']}）")
+                continue
+            built[sp] = sframe.build_intergenic_db(
+                root, sp, min_aa=args.min_aa, prefix=args.prefix, log=_log)
     state = load_state(root)
     state.setdefault("stages", {})["sframe"] = {
         "done": True, "ts": _now(),
-        "verdicts": {sp: p["level"] for sp, p in plans.items()}}
+        "verdicts": {sp: p["level"] for sp, p in plans.items()},
+        "built": {sp: len(v) for sp, v in built.items()}}
     save_state(root, state)
     return 0
 
@@ -502,7 +532,7 @@ def cmd_dbbuild(args):
         _log(f"  声明: {st['notes']}")
     import csv as _csv
     out = os.path.join(dbroot, "db_stats.tsv")
-    with open(out, "w", newline="", encoding="utf-8-sig") as fh:
+    with open_in_project(root, out, "w", newline="", encoding="utf-8-sig") as fh:
         w = _csv.DictWriter(fh, fieldnames=list(all_stats[0].keys()), delimiter="	")
         w.writeheader()
         w.writerows(all_stats)
@@ -575,7 +605,7 @@ def cmd_e1(args):
             fasta.replace(BS, "/"), os.path.join(mgf_dir, f).replace(BS, "/"),
             tdir.replace(BS, "/"), short, enz, thread=args.thread)
         cfg_path = os.path.join(tdir, short + ".cfg")
-        with open(cfg_path, "w", encoding="gbk", newline=chr(10)) as fh:
+        with open_in_project(root, cfg_path, "w", encoding="gbk", newline=chr(10)) as fh:
             fh.write(cfg_text)
         rc = pfsearch.run_searcher(cfg_path, pfind_bin)
         n = pfsearch.count_result_rows(spectra)
@@ -586,7 +616,7 @@ def cmd_e1(args):
             _log(f"  [{i}/{len(tasks)}] {short} {status} PSM={n}")
     out = os.path.join(out_root, "e1_report.tsv")
     import csv as _csv3
-    with open(out, "w", newline="", encoding="utf-8-sig") as fh:
+    with open_in_project(root, out, "w", newline="", encoding="utf-8-sig") as fh:
         w = _csv3.writer(fh, delimiter=chr(9))
         w.writerow(["task", "species", "enzyme", "cv", "status", "n_psm", "note"])
         w.writerows(report)
@@ -656,16 +686,22 @@ def cmd_e2(args):
         tdir = os.path.join(os.path.join(out_root, sp), tname)
         os.makedirs(tdir, exist_ok=True)
         spectra = os.path.join(tdir, "pFind-Filtered.spectra")
-        if os.path.exists(spectra):
-            n = pfsearch.count_result_rows(spectra)
-            return (tname, sp, enz, cv, dbk, "OK", n, "reuse")
         fasta = os.path.join(os.path.join(os.path.join(root, "02_db", sp), "db_" + dbk + ".faa"), "")
         fasta = fasta[:-1]
+        if os.path.exists(spectra):
+            # 库更新过（重建同名池）时旧结果必须作废：库比结果新就重搜
+            try:
+                stale = os.path.getmtime(fasta) > os.path.getmtime(spectra)
+            except OSError:
+                stale = False
+            if not stale:
+                n = pfsearch.count_result_rows(spectra)
+                return (tname, sp, enz, cv, dbk, "OK", n, "reuse")
         cfg_text = pfsearch.build_cfg_lines(
             fasta.replace(BS2, "/"), os.path.join(mgf_dir, f).replace(BS2, "/"),
             tdir.replace(BS2, "/"), tname, enz, thread=args.thread)
         cfg_path = os.path.join(tdir, tname + ".cfg")
-        with open(cfg_path, "w", encoding="gbk", newline=chr(10)) as fh:
+        with open_in_project(root, cfg_path, "w", encoding="gbk", newline=chr(10)) as fh:
             fh.write(cfg_text)
         rc = pfsearch.run_searcher(cfg_path, pfind_bin)
         n = pfsearch.count_result_rows(spectra)
@@ -700,7 +736,7 @@ def cmd_e2(args):
         report = [r for r in rows if r is not None]
     out = os.path.join(out_root, "e2_report.tsv")
     import csv as _csv3
-    with open(out, "w", newline="", encoding="utf-8-sig") as fh:
+    with open_in_project(root, out, "w", newline="", encoding="utf-8-sig") as fh:
         w = _csv3.writer(fh, delimiter=chr(9))
         w.writerow(["task", "species", "enzyme", "cv", "db", "status", "n_psm", "note"])
         w.writerows(report)
@@ -1251,6 +1287,9 @@ def main(argv=None):
     sfp.add_argument("--no-measure", action="store_true",
                      help="不真翻译，只按 2G 估算残基（大基因组快）")
     sfp.add_argument("--json", default="", help="判定结果写到该路径（默认 02_db/<sp>/sixframe_plan.json）")
+    sfp.add_argument("--build", action="store_true",
+                     help="判定通过后建「基因间区六框」库（db_9i1/2/3 + decoy）")
+    sfp.add_argument("--prefix", default="9i", help="六框库前缀（默认 9i）")
     sfp.set_defaults(func=cmd_sframe)
     e1p = sub.add_parser("e1", help="E1 已注释库搜库（pFind x db_annot x 分CV MGF）")
     e1p.add_argument("--workdir", required=True, help="项目目录")

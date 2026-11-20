@@ -3,9 +3,29 @@
 **v0.1.0 · 2026-11-13 · first public release**
 
 ORFscape turns a genome into a layered ORF database and uses DDA mass spectra to
-decide which ORFs were actually translated. This first release covers the
-prokaryotic pipeline end to end, the eukaryotic layer builder, a desktop GUI, and
-agent integration.
+decide which ORFs were actually translated. This release covers both lines end to
+end — prokaryote P0→P9 and eukaryote S1→S11 — plus a desktop GUI and agent
+integration. **The version line stays 0.1.0 until the paper is published**; later
+features and fixes land on this same number instead of bumping it.
+
+## Update · 2026-11-20 (still v0.1.0)
+
+- **Eukaryotic line reaches real mass spectra** — three independent transcript
+  layers (vendor assembly 150,006 ORFs / re-assembly 34,978 / AUGUSTUS 14,267),
+  spliced L0 verified at 7,818/7,820 (100.0%) against RefSeq, junction peptides,
+  and an optional intergenic six-frame layer behind a coding-density gate (R = 6/d).
+  Reference run *C. neoformans* H99: E1 404,069 PSM → P6 3,951 rows → P6b 4,016 →
+  **KEEP 1,629 rows / 1,006 peptides** → **999 peptides in 537 ORFs**.
+- **Documented, gated flows** — `docs/PIPELINE.md` (overview + `orfscape run`
+  contract), `docs/PROKARYOTE.md`, `docs/EUKARYOTE.md`, `docs/CONSTRAINTS.md`
+  (the rules that make numbers comparable), `docs/VERSIONS.md`.
+- **Fixes that changed numbers** — P6b four filters had been disabled for eukaryotic
+  headers (`L0_` vs `L0|`), isoPSV step-1 cache kept stale spectra, `--reuse`
+  promoted undecided peptides, and eukaryotic event gene geometry was taken from the
+  wrong GFF. After the fixes: MISSING 100 → 0, KEEP 1,040 → 1,006, `intergenic`
+  0 → 75 peptides / 42 ORFs.
+- **Six-frame applicability gate** (`orfscape sframe`) and a cross-species homology
+  workflow (species / complex / genus / family calls).
 
 ## Highlights
 
@@ -67,12 +87,14 @@ Run `python -m orfscape doctor` to see what is present.
 
 ## Known limitations
 
-- Eukaryotic **search** is not wired yet: the layers and the EUK gate exist, but
-  E1/E2 assume the prokaryotic database layout.
-- `LJR|` / `L2|` are not yet in the novel-peptide whitelist; novel peptides spanning
-  an intron are not located by transcript coordinates.
-- BRAKER3 support is script generation only.
-- Card thresholds are recomputed per run; KEEP counts are not comparable across runs.
+- **Eukaryotic orchestration starts at E1**: the layer-building prefix (`eukbuild`,
+  `euktx`, `sframe --build`) takes project-level arguments and runs stage by stage
+  per `docs/EUKARYOTE.md`.
+- Novel splice junctions are not a separate layer; junction peptides cover annotated
+  junctions only.
+- BRAKER3 support is script generation only; Prodigal is not bundled (GPL-3).
+- Card thresholds are calibrated from Tier1 and locked per comparison; KEEP counts
+  are never comparable across runs without their card values.
 
 ## License
 

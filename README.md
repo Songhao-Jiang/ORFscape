@@ -164,7 +164,7 @@ python tests/test_eukevents.py     # seven event classes, junction blocks, pepti
 python -m orfscape.checks --workdir <proj> --stage EUK
 ```
 
-## Limitations (v0.2)
+## Limitations (v0.1, version line frozen)
 
 - **Eukaryotic orchestration is split**: the eukaryotic prefix (S1–S3: `eukbuild`,
   `euktx`, `sframe --build`) takes project-level arguments and is run stage by stage
@@ -204,7 +204,7 @@ If ORFscape contributes to a publication, cite the repository (`CITATION.cff`).
 （注释 / ab initio / 六框或转录本 ORF / N 端延伸 / 转录本证据 / 剪接连接肽），
 再用 DDA 质谱把真正翻译出来的 ORF 捞出来，按事件归类并出图出报告。
 
-**当前版本**：v0.1.0。原核 P0→P9 与真核 S1→S11 都跑通真实数据：原核参考
+**当前版本**：v0.1.0（论文发表前版本号冻结在 0.1.0，功能与修复都进这条线）。原核 P0→P9 与真核 S1→S11 都跑通真实数据：原核参考
 （NTM 双物种 / TP）与真核参考（隐球菌 H99）的数字写在
 [`docs/PROKARYOTE.md`](docs/PROKARYOTE.md) 与 [`docs/EUKARYOTE.md`](docs/EUKARYOTE.md)。
 

@@ -11,7 +11,7 @@ engine is a different result.
 
 | 项 | 版本 |
 |---|---|
-| ORFscape | **0.1.0**（本文件随该版本冻结；`python -m orfscape --version`） |
+| ORFscape | **0.1.0**（论文发表前冻结在这条版本线；`python -m orfscape --version`） |
 | Python | 3.9+，**实测 3.10** |
 | 依赖（纯 Python 包） | `numpy`、`matplotlib`、`python-docx`、`Pillow`；GUI 仅 `tkinter`（随 Python 自带） |
 | 平台 | Windows 10/11（完整功能，含 GUI 与 `rawdump`）；Python 包本身可移植 |

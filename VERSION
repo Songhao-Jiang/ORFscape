@@ -1,6 +1,7 @@
-ORFscape v0.1.0 (2026-11-20) — eukaryotic line runs real mass spectra end to end.
-Two locked reference lines (prokaryote P0-P9, eukaryote S1-S11) with documented gates,
-constraints and software versions (docs/PIPELINE.md, docs/PROKARYOTE.md,
-docs/EUKARYOTE.md, docs/CONSTRAINTS.md, docs/VERSIONS.md). Fixes: P6b four filters were
-disabled for eukaryotic headers; isoPSV step-1 cache and reuse policy; eukaryotic event
-gene geometry; AUGUSTUS transcript import. Desktop GUI driven by a JSONL event stream.
+ORFscape v0.1.0 — layered-ORF proteogenomics pipeline.
+Version line is frozen at 0.1.0 until the paper is published; features and fixes land
+on this line instead of bumping the number.
+Prokaryote P0-P9 and eukaryote S1-S11 both run real data; gates, constraints and
+software versions are documented in docs/PIPELINE.md, docs/PROKARYOTE.md,
+docs/EUKARYOTE.md, docs/CONSTRAINTS.md, docs/VERSIONS.md. Desktop GUI driven by a
+JSONL event stream.

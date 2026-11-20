@@ -57,7 +57,6 @@ docs/GUI_BACKLOG.md
 orfscape/tools/prodigal.exe
 
 # ── 项目专属结果包模块（不参与通用流程，团队本地保留）──
-orfscape/core/local_pack.py
 scripts/cneo_*.py
 scripts/ntm_*.py
 scripts/tp_*.py

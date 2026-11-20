@@ -1,4 +1,5 @@
-"""spectra_pdfs.py -- rebuild the two 项目 deliverables in the isoPSV native layout.
+"""spectra_pdfs.py -- rebuild the two deliverables (spectra booklet, IGV booklet)
+in the isoPSV native layout.
 
 1) isoPSV_spectra.pdf  : A4 page per novel peptide, laid out exactly like
    isoPSV's `novel_peptide_spectra.pdf` (header block, ion ladder with b/y

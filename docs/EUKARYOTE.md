@@ -121,6 +121,9 @@ E2 只出 316 PSM，P7 留 12 行且全部与组装转录本重叠 → **零新�
 
 ## 7. 工具与脚本
 
+通用部分随包发布（`orfscape eukbuild` / `euktx` / `sframe`）；下表 `scripts/cneo_*.py` 是
+**本项目随项目交付、按 `.gitignore` 不入库**的辅助脚本，换项目时按同样输入自己实现即可。
+
 | 脚本 | 作用 |
 |---|---|
 | `orfscape eukbuild` | 拼接 L0 / LJR / L2（`--preset CREI\|HSAP` 自动找基因组） |

@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import os
 import re
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -35,7 +36,6 @@ SKIP_GLOBS = [
     "*.pyc", "*.pyo", "*.log", "*.jsonl", "*.zip", "*.tmp",
     "orfscape/paths.local.json",
     "orfscape/tools/prodigal.exe",      # GPL-3 binary: install it yourself
-    "orfscape/core/local_pack.py",             # project-specific result pack, not part of the pipeline
     "scripts/_*.py",
     "base_view.png",
     "chain_after_e2.txt",
@@ -48,6 +48,8 @@ FORBIDDEN = [
     (re.compile("JKY" + "_work|JKY" + "教务", re.I), "internal workspace path"),
     (re.compile("rsc" + "5385459"), "credential"),
     (re.compile(r"password\s*[:=]\s*['\"][^'\"]+['\"]", re.I), "hard-coded password"),
+    # 人名（首字母）不允许出现在上传的文本/代码里；模式拆开写，避免本文件自身命中
+    (re.compile("S" + "JH|Y" + "QN"), "personal initials"),
 ]
 TEXT_EXT = {".py", ".md", ".txt", ".json", ".cff", ".cfg", ".ini", ".bat",
             ".yml", ".yaml", ".toml", ".tsv", ".csv"}
@@ -66,10 +68,24 @@ def _skip(path):
     return False
 
 
+def _tracked():
+    """仓库已跟踪的相对路径集合；拿不到 git 时返回 None（退回按目录/glob 过滤）。"""
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"],
+                             check=True, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return {p.decode("utf-8", "replace") for p in out.split(b"\0") if p}
+
+
 def collect():
+    """只打包 git 跟踪的文件：本地私有模块（含人名）永远不会被带进发布包。"""
+    tracked = _tracked()
     files = []
     for p in sorted(ROOT.rglob("*")):
         if p.is_dir() or _skip(p):
+            continue
+        if tracked is not None and p.relative_to(ROOT).as_posix() not in tracked:
             continue
         files.append(p)
     return files

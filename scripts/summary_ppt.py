@@ -1,4 +1,4 @@
-"""summary_ppt.py -- build the results briefing deck (16:9, python-pptx).
+"""summary_ppt.py -- build the result briefing deck (16:9, python-pptx).
 
 Usage:
     python summary_ppt.py --iso-img A.png --igv-img B.png --out C.pptx

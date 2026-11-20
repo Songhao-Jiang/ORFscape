@@ -103,6 +103,11 @@ python -m orfscape.checks --workdir <proj> --stage C    # 单阶段
 （先清空再拷）或项目自带的 packer；通用 `orfscape pack` **不覆盖已存在文件**，
 复用旧目录会把上一轮的图与报告留在包里。
 
+**版本号冻结**：论文正式发表前一律 **v0.1.0**——功能、修复、文档都进这一条线，不升号；
+发布包名随之固定为 `ORFscape_v<版本>.zip`，GitHub 上只保留一个 **v0.1.0** Release/tag。
+`build_release.py` 只打包 git 跟踪的文件，并拒绝个人路径、凭据与人名缩写；
+`docs/VERSIONS.md` 记录与该版本一起冻结的外部组件版本。
+
 ## 5. 出问题时先看哪里
 
 1. `00_logs/progress.jsonl` 最后一个 `stage.check` → 哪道门 FAIL；

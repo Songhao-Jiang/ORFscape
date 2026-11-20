@@ -58,18 +58,24 @@ A stage is not done until its check passes.
 | QC | `python -m orfscape qc --workdir <proj>` (+ `qcfigs`, `e1figs`) | figures and tables exist |
 | E2 | `python -m orfscape e2 --workdir <proj> --dbs aug,6f --thread T` | tasks == MGFs × DBs, PSM > 0 |
 | P6 | `python -m orfscape novel --workdir <proj>` | rows > 0; layer hits match non-empty layers |
-| P6b | `python -m orfscape research --workdir <proj> --thread T --workers W` | merged ≥ P6; small DB |
-| P7 | `python -m orfscape validate --workdir <proj> --from-research --min-cos auto` | KEEP > 0; every MISSING has a reason |
+| P6b | `python -m orfscape research --workdir <proj> --thread T --workers W --db-mode novel` | merged ≥ P6; small DB |
+| P7 | `python -m orfscape validate --workdir <proj> --from-research --cards <score>,<cos>` | KEEP > 0; every MISSING has a reason |
 | P8a | `python -m orfscape novgene --workdir <proj> --from 06b_validate_research` | events > 0, none unlocated |
 | P8b | `python -m orfscape novannot --workdir <proj> --from 06b_validate_research [--no-esm]` | attribute/homolog/feature tables exist |
 | P8c | `python -m orfscape novreport --workdir <proj> --from 06b_validate_research` | report has non-zero statistics |
 | P9 | `python -m orfscape novelfigs --workdir <proj> --from 06b_validate_research` | funnel + parameter figures |
 
-Eukaryotic layer build (before any search):
+`--cards` is **not optional**: `auto` re-calibrates Tier1 on whatever peptide subset
+is passed, which silently loosens the gate on incremental runs. Take the values from
+the project's locked record (`docs/CONSTRAINTS.md` §1).
+
+Eukaryotic line — the layer prefix is project-level and runs stage by stage; follow
+`docs/EUKARYOTE.md` S1–S3, then hand over to E1:
 
 ```bash
 python -m orfscape eukbuild --workdir <proj> --sp CREI --fna genome.fna --gff genomic.gff
-python -m orfscape.checks --workdir <proj> --stage EUK
+python -m orfscape sframe   --workdir <proj> --sp CREI          # six-frame gate first
+python -m orfscape.checks   --workdir <proj> --stage EUK
 ```
 
 ## Conventions you must not break

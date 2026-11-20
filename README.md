@@ -10,8 +10,15 @@ and once against the discovery layers, filters novel peptides, arbitrates them
 spectrum by spectrum, classifies each event (intergenic / different frame /
 antisense / N-terminal extension) and writes figures plus a report.
 
-Prokaryotes run end to end today (P0→P9); eukaryotes get the spliced-protein and
-junction-peptide layers (`eukbuild`) with search wiring in progress.
+Prokaryotes run end to end today (P0→P9). Eukaryotes run end to end too, as a
+spliced line (S1→S11): `eukbuild` + transcript layers + the same P6→P9 tail, with
+eight event classes and gene geometry taken from the reference annotation. The
+reference eukaryotic run is *C. neoformans* H99 (404,069 E1 PSM → KEEP 1,629 rows /
+1,006 peptides → 999 peptides in 537 ORFs).
+
+**Docs** — [pipeline overview](docs/PIPELINE.md) · [prokaryote P0–P9](docs/PROKARYOTE.md) ·
+[eukaryote S1–S11](docs/EUKARYOTE.md) · [constraints 限定文本](docs/CONSTRAINTS.md) ·
+[software versions](docs/VERSIONS.md).
 
 ![GUI](docs/screenshots/gui_en.png)
 
@@ -112,8 +119,8 @@ manifest that validates the result against the reference proteome.
 Validated against RefSeq: yeast R64 6,009 proteins (99.92% identical), *C. reinhardtii*
 19,525 proteins (99.98%) with 84,606 junction peptides, human 145,213 proteins with
 782,122 junction peptides (98.23% exact; 99.22% allowing documented genome-vs-RefSeq
-substitutions and non-ATG starts). Search wiring for eukaryotic MS data is not
-finished yet (see Limitations).
+substitutions and non-ATG starts). Search wiring is complete: the eukaryotic line
+runs E1/E2/P6/P6b/P7/P8/P9 end to end — see [docs/EUKARYOTE.md](docs/EUKARYOTE.md).
 
 ## Configuration
 
@@ -135,7 +142,8 @@ ORFscape/
 │                        checks, sysmon, config, core/, gui/, tools/
 ├── tests/               8 test entries + visual baseline
 ├── scripts/             result-pack builders (P13 tables/figures/PDF), fetch helpers
-├── docs/                GUI manual, screenshots
+├── docs/                pipeline specs (PIPELINE / PROKARYOTE / EUKARYOTE /
+│                        CONSTRAINTS / VERSIONS), GUI manual, screenshots
 ├── integrations/        agent runbook + ZCode / Claude Code / generic adapters
 ├── GUI.md               GUI manual (Chinese)
 ├── README.md · LICENSE · NOTICE · VERSION · CITATION.cff
@@ -156,16 +164,19 @@ python tests/test_eukevents.py     # seven event classes, junction blocks, pepti
 python -m orfscape.checks --workdir <proj> --stage EUK
 ```
 
-## Limitations (v0.1)
+## Limitations (v0.2)
 
-- Eukaryotic **search** is wired only at the database level: `dbbuild` assembles the
-  spliced layers (L0 + junction → `db_aug`, transcript ORFs → `db_6f`), and
-  `novgene --events euk` classifies events in seven classes at peptide level, but no
-  eukaryotic MS dataset has been run through E1/E2 yet.
+- **Eukaryotic orchestration is split**: the eukaryotic prefix (S1–S3: `eukbuild`,
+  `euktx`, `sframe --build`) takes project-level arguments and is run stage by stage
+  as documented in [docs/EUKARYOTE.md](docs/EUKARYOTE.md); `orfscape run` takes over
+  from E1 and drives the shared P6→P9 tail.
 - BRAKER3 is script generation only (GeneMark-ETP/AUGUSTUS must be installed).
 - Prodigal is not bundled; without it the ab initio layer is skipped explicitly.
-- Card thresholds are recomputed per run from Tier1 — never compare KEEP counts
-  across runs without saying so.
+- Card thresholds are calibrated from Tier1 and **locked per comparison**; a KEEP
+  count is never comparable across runs without its card values (see
+  [docs/CONSTRAINTS.md](docs/CONSTRAINTS.md) §1).
+- Novel splice junctions are not built as their own layer; LJR covers annotated
+  junctions only.
 
 ## Agent / agent-shell integration
 
@@ -193,8 +204,9 @@ If ORFscape contributes to a publication, cite the repository (`CITATION.cff`).
 （注释 / ab initio / 六框或转录本 ORF / N 端延伸 / 转录本证据 / 剪接连接肽），
 再用 DDA 质谱把真正翻译出来的 ORF 捞出来，按事件归类并出图出报告。
 
-**当前版本**：v0.1.0（首次公开发布）。原核 P0→P9 全流程可跑；真核已完成剪接蛋白层
-与连接肽层（`eukbuild`），搜库接线尚未完成。
+**当前版本**：v0.1.0。原核 P0→P9 与真核 S1→S11 都跑通真实数据：原核参考
+（NTM 双物种 / TP）与真核参考（隐球菌 H99）的数字写在
+[`docs/PROKARYOTE.md`](docs/PROKARYOTE.md) 与 [`docs/EUKARYOTE.md`](docs/EUKARYOTE.md)。
 
 **最小用法**
 
@@ -213,7 +225,8 @@ L4/L5 自切与污染、L6 转录本证据；真核另加剪接连接肽层（`L
 `orfscape/paths.local.json` 指定；`rawdump`/`rawmethod` 上游无预编译包，已随包提供
 （Apache-2.0，见 `NOTICE`）。Prodigal 为 GPL-3，请自行安装。
 
-**已知边界**：真核搜库未接线、跨内含子新肽未定位、BRAKER3 仅生成脚本、卡值每轮重算
-跨轮不可比。详见英文部分的 *Limitations*。
+**已知边界**：真核前缀段（建层）按 [`docs/EUKARYOTE.md`](docs/EUKARYOTE.md) 逐步执行，
+`orfscape run` 从 E1 接管；跨内含子新肽未单独建层；BRAKER3 仅生成脚本；
+卡值每轮标定、跨轮不可比（见 [`docs/CONSTRAINTS.md`](docs/CONSTRAINTS.md)）。
 
 许可见 `LICENSE`（MIT）；第三方组件与许可见 `NOTICE`。

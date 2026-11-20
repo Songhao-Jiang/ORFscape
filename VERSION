@@ -1,5 +1,6 @@
-ORFscape v0.1.0 (2026-11-13) — first public release.
-Layered ORF database (L0-L6) for prokaryotes plus a spliced layer builder for eukaryotes;
-P0-P9 orchestration with a self-check gate after every stage; pFind E1/E2 discovery search;
-isoPSV competitive arbitration; event classification, annotation and report; desktop GUI
-driven by a JSONL event stream.
+ORFscape v0.1.0 (2026-11-20) — eukaryotic line runs real mass spectra end to end.
+Two locked reference lines (prokaryote P0-P9, eukaryote S1-S11) with documented gates,
+constraints and software versions (docs/PIPELINE.md, docs/PROKARYOTE.md,
+docs/EUKARYOTE.md, docs/CONSTRAINTS.md, docs/VERSIONS.md). Fixes: P6b four filters were
+disabled for eukaryotic headers; isoPSV step-1 cache and reuse policy; eukaryotic event
+gene geometry; AUGUSTUS transcript import. Desktop GUI driven by a JSONL event stream.

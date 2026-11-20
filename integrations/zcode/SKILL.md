@@ -1,22 +1,33 @@
 ---
 name: orfscape-proteogenomics
-description: End-to-end proteogenomics with ORFscape (prokaryotic P0–P9 plus eukaryotic layer building). Use when a genome plus DDA mass spectra must be turned into novel peptides / novel ORFs / N-terminal corrections: data confirmation, six-layer database (L0–L6), E1/E2 searches, P6 novel peptides, P6b candidate re-search, P7 per-spectrum arbitration, P8 event classification and annotation, P9 figures and report. Also use to resume, audit or debug an existing ORFscape project.
+description: End-to-end proteogenomics with ORFscape (prokaryotic P0–P9 and eukaryotic S1–S11). Use when a genome plus DDA mass spectra must be turned into novel peptides / novel ORFs / N-terminal corrections: data confirmation, layered database (L0–L6, spliced layers for eukaryotes), E1/E2 searches, P6 novel peptides, P6b candidate re-search, P7 per-spectrum arbitration, P8 event classification and annotation, P9 figures and report. Also use to resume, audit or debug an existing ORFscape project.
 ---
 
 # ORFscape proteogenomics
 
 This skill turns the validated ORFscape pipeline into explicit steps with a gate
-after every stage. Full operating contract: [`../AGENT_RUNBOOK.md`](../AGENT_RUNBOOK.md).
-Read it once; the table below is the short form.
+after every stage. Two locked flows live in the repository:
+
+| Document | What it fixes |
+|---|---|
+| [`docs/PIPELINE.md`](../../docs/PIPELINE.md) | both lines, automation contract (`orfscape run`), delivery |
+| [`docs/PROKARYOTE.md`](../../docs/PROKARYOTE.md) | P0–P9 commands, gates, reference numbers |
+| [`docs/EUKARYOTE.md`](../../docs/EUKARYOTE.md) | S1–S11 commands, gates, eight event classes |
+| [`docs/CONSTRAINTS.md`](../../docs/CONSTRAINTS.md) | the rules that make numbers comparable (限定文本) |
+| [`docs/VERSIONS.md`](../../docs/VERSIONS.md) | external tool versions and what they affect |
+
+Full operating contract: [`../AGENT_RUNBOOK.md`](../AGENT_RUNBOOK.md). Read it once;
+the table below is the short form.
 
 ## When to use / not use
 
-**Use** — prokaryotic genome + DDA MS data, looking for novel peptides, novel ORFs,
-N-terminal start corrections, antisense or different-frame expression; or resuming,
-re-running and auditing an existing ORFscape project.
+**Use** — prokaryotic or eukaryotic genome + DDA MS data, looking for novel peptides,
+novel ORFs, N-terminal start corrections, antisense or different-frame expression; or
+resuming, re-running and auditing an existing ORFscape project.
 
-**Do not use** — quantitative proteomics that needs no custom database, or
-eukaryotic *search* (only `eukbuild` layer construction is supported in v0.1).
+**Do not use** — quantitative proteomics that needs no custom database. For a
+eukaryote, follow `docs/EUKARYOTE.md` for the layer-building prefix (S1–S3) and then
+run the shared tail; do not apply the prokaryotic six-layer recipe directly.
 
 ## 0. Preflight
 
